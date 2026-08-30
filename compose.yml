@@ -5,4 +5,9 @@ services:
       - "127.0.0.1:3000:3000"
     env_file:
       - .env
+    volumes:
+      - activity-log-data:/data
     restart: unless-stopped
+
+volumes:
+  activity-log-data:

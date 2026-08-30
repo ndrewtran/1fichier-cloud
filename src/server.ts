@@ -19,6 +19,12 @@ import {
   type FichierResponseDiagnostic,
 } from "./1fichier.js";
 import { handleUpload, sendUploadError } from "./upload.js";
+import {
+  ActivityLogStore,
+  defaultActivityLogPath,
+  validateActivityEntry,
+} from "./activity-log.js";
+import { MAX_ACTIVITY_BATCH } from "./activity-batch.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
 export const UPLOAD_REQUEST_TIMEOUT_MS = (4 * 60 * 60 + 5 * 60) * 1000;
@@ -79,7 +85,17 @@ function clientIp(request: Request): string {
   return request.ip || "unknown";
 }
 
-export function createApp(config: AppConfig, client = new FichierClient(config.apiKey)): express.Express {
+function requestErrorStatus(error: unknown): number {
+  if (typeof error !== "object" || error === null) return 500;
+  const status = (error as { status?: unknown }).status;
+  return typeof status === "number" && Number.isInteger(status) && status >= 400 && status < 500 ? status : 500;
+}
+
+export function createApp(
+  config: AppConfig,
+  client = new FichierClient(config.apiKey),
+  activityLog = new ActivityLogStore(config.activityLogPath ?? defaultActivityLogPath(config.nodeEnv)),
+): express.Express {
   const app = express();
   const throttle = new LoginThrottleStore();
   app.set("trust proxy", 1);
@@ -96,6 +112,34 @@ export function createApp(config: AppConfig, client = new FichierClient(config.a
   });
 
   app.get("/healthz", (_request, response) => response.status(200).json({ ok: true }));
+  app.post("/api/activity-log", express.json({ limit: "64kb", strict: true }), async (request, response) => {
+    if (!sameOrigin(request, config)) {
+      response.status(403).json({ error: "Cross-origin request rejected" });
+      return;
+    }
+    if (!requireAuth(request, response, config)) return;
+    const body = request.body as { entries?: unknown };
+    if (!body || !Array.isArray(body.entries) || body.entries.length < 1 || body.entries.length > MAX_ACTIVITY_BATCH) {
+      response.status(400).json({ error: `Provide between 1 and ${MAX_ACTIVITY_BATCH} activity entries` });
+      return;
+    }
+    const entries = [];
+    for (const value of body.entries) {
+      const entry = validateActivityEntry(value);
+      if (!entry) {
+        response.status(400).json({ error: "One or more activity entries are invalid" });
+        return;
+      }
+      entries.push(entry);
+    }
+    try {
+      const persisted = await activityLog.append(entries);
+      response.status(201).json({ entries: persisted });
+    } catch {
+      response.status(503).json({ error: "Activity log unavailable" });
+    }
+  });
+
   app.use(express.json({ limit: "32kb", strict: true }));
 
   app.post("/api/login", (request, response) => {
@@ -124,6 +168,16 @@ export function createApp(config: AppConfig, client = new FichierClient(config.a
 
   app.get("/api/session", (request, response) => {
     response.json({ authenticated: isAuthenticated(request, config), maxUploadBytes: config.maxUploadBytes });
+  });
+
+  app.get("/api/activity-log", async (request, response) => {
+    if (!requireAuth(request, response, config)) return;
+    response.setHeader("Cache-Control", "no-store");
+    try {
+      response.json({ entries: await activityLog.list() });
+    } catch {
+      response.status(503).json({ error: "Activity log unavailable" });
+    }
   });
 
   app.get("/api/1fichier/status", async (request, response) => {
@@ -197,7 +251,7 @@ export function createApp(config: AppConfig, client = new FichierClient(config.a
 
   const errorHandler: ErrorRequestHandler = (error, _request, response, _next) => {
     if (response.headersSent) return;
-    response.status(500).json({ error: publicError(error) });
+    response.status(requestErrorStatus(error)).json({ error: publicError(error) });
   };
   app.use(errorHandler);
   return app;

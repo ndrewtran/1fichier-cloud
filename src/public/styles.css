@@ -102,6 +102,7 @@ textarea::placeholder, input::placeholder { color: #666; }
 .activity-strip-title { display: flex; align-items: baseline; justify-content: space-between; gap: 16px; padding: 17px 0 11px; }
 .activity-strip-title h2 { margin: 0; font-size: 15px; font-weight: 500; }
 .activity-strip-title span { color: var(--muted); font-size: 11px; }
+.activity-persistence-status { color: var(--red); }
 .activity-list { margin: 0; padding: 0; list-style: none; }
 .activity-list { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); }
 .activity-list li { min-width: 0; border-top: 1px solid var(--line); }

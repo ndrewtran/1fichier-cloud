@@ -1,3 +1,5 @@
+import { boundActivityResponseBody, MAX_ACTIVITY_BATCH, takeActivityBatch } from "../activity-batch.js";
+
 interface UploadItem {
   id: string;
   file: File;
@@ -22,6 +24,10 @@ type ActivityOperation = "session" | "upload" | "download" | "queue" | "api" | "
 
 // Four lifecycle entries per file covers a realistic 500-file batch while retaining session/API diagnostics.
 const MAX_ACTIVITY_ENTRIES = 2_000;
+const ACTIVITY_FLUSH_DELAY_MS = 250;
+const ACTIVITY_RETRY_BASE_DELAY_MS = 500;
+const ACTIVITY_RETRY_MAX_DELAY_MS = 8_000;
+const ACTIVITY_LOGOUT_DRAIN_MS = 1_500;
 
 interface ActivityResponse {
   status?: number;
@@ -56,6 +62,7 @@ const downloadQueue = element("download-queue");
 const downloadStatus = element("download-status");
 const activityList = element("activity-list");
 const activityLog = element("activity-log");
+const activityPersistenceStatus = element("activity-persistence-status");
 const activityDrawer = element("activity-drawer");
 const drawerPeek = element("drawer-peek");
 const drawerPeekLabel = element("drawer-peek-label");
@@ -77,6 +84,12 @@ let drawerState: "closed" | "minimized" | "open" = "closed";
 let lastLoggedApiStatus: Exclude<ApiStatus, "checking"> | undefined;
 let sessionGeneration = 0;
 let logoutPending = false;
+let authenticated = false;
+let activityPersistenceController: AbortController | undefined;
+let pendingActivityEntries: ActivityLogEntry[] = [];
+let activityFlushTimer: number | undefined;
+let activityFlushPromise: Promise<void> | undefined;
+let activityRetryAttempt = 0;
 
 function element<T extends HTMLElement = HTMLElement>(id: string): T {
   const found = document.getElementById(id);
@@ -102,7 +115,9 @@ function sanitizeResponseText(value: string): string {
   return value
     .slice(0, 4_096)
     .replace(/https?:\/\/[^/\s@]+:[^@\s]+@/gi, "https://[redacted]@")
-    .replace(/(["']?)(authorization|(?:api[_-]?)?key|password|passwd|cookie|secret|session|credential|bearer|token|auth(?:entication|orization)?|pass(?:word|phrase)?)\1\s*[:=]\s*(?:(?:bearer|basic)\s+)?(?:"[^"]*"|'[^']*'|[^\s,;}]+)/gi, (_match, quote: string, key: string) => `${quote}${key}${quote}: [redacted]`);
+    .replace(/(?<![?&#A-Za-z0-9_.-])(["'“]?)([A-Za-z0-9_.-]*(?:authorization|(?:api[_-]?)?key|password|passwd|cookie|secret|session|credential|bearer|token|auth|pass)[A-Za-z0-9_.-]*)(["'”’]?)\s*[:=]\s*(?:(?:(?:bearer|basic)\s+)?(?:"[^"]*"|'[^']*'|“[^”]*”|‘[^’]*’|[^\s,;}]+))/gi, (_match, open: string, key: string, close: string) => `${open}${key}${close}: [redacted]`)
+    .replace(/\b(bearer|basic)\s+[A-Za-z0-9._~+/=-]+/gi, "$1 [redacted]")
+    .replace(/([?&#][A-Za-z0-9_.-]*(?:authorization|(?:api[_-]?)?key|password|passwd|cookie|secret|session|credential|bearer|token|auth|pass)[A-Za-z0-9_.-]*=)[^&#\s]+/gi, "$1[redacted]");
 }
 
 function sanitizeResponseValue(value: unknown, depth = 0): unknown {
@@ -125,11 +140,11 @@ function responseDiagnostic(status: number | undefined, body: unknown, fallback:
   if (nested) {
     const nestedStatus = typeof nested.status === "number" ? nested.status : status;
     const nestedBody = nested.body;
-    return { ...(nestedStatus !== undefined ? { status: nestedStatus } : {}), ...(nestedBody !== undefined ? { body: sanitizeResponseValue(nestedBody) } : {}) };
+    return { ...(nestedStatus !== undefined ? { status: nestedStatus } : {}), ...(nestedBody !== undefined ? { body: boundActivityResponseBody(sanitizeResponseValue(nestedBody)) } : {}) };
   }
   return {
     ...(status !== undefined ? { status } : {}),
-    body: sanitizeResponseValue(body ?? { error: fallback }),
+    body: boundActivityResponseBody(sanitizeResponseValue(body ?? { error: fallback })),
   };
 }
 
@@ -176,6 +191,12 @@ function setVisible(authenticated: boolean): void {
   else passwordInput.focus();
 }
 
+function setActivityPersistenceStatus(message?: string): void {
+  activityPersistenceStatus.hidden = !message;
+  activityPersistenceStatus.textContent = message ?? "";
+  activityPersistenceStatus.className = message ? "activity-persistence-status is-error" : "activity-persistence-status";
+}
+
 function setApiStatus(status: ApiStatus): void {
   const statusClass = status === "connected" ? "status--ok" : status === "invalid_key" || status === "unavailable" ? "status--error" : status === "not_configured" ? "status--waiting" : "status--working";
   const statusCopy = status === "connected" ? "API connected" : status === "not_configured" ? "API not configured" : status === "invalid_key" ? "API key invalid" : status === "unavailable" ? "API unavailable" : "API checking";
@@ -190,6 +211,17 @@ function resetApiStatus(): void {
 
 function clearSessionState(): void {
   sessionGeneration += 1;
+  authenticated = false;
+  activityPersistenceController?.abort();
+  activityPersistenceController = undefined;
+  activityFlushPromise = undefined;
+  pendingActivityEntries.length = 0;
+  activityRetryAttempt = 0;
+  if (activityFlushTimer !== undefined) {
+    window.clearTimeout(activityFlushTimer);
+    activityFlushTimer = undefined;
+  }
+  setActivityPersistenceStatus();
   activities.length = 0;
   selectedActivityId = undefined;
   drawerState = "closed";
@@ -206,6 +238,193 @@ function clearSessionState(): void {
   renderUploads();
   renderDownloads();
   renderActivity();
+}
+
+function isActivityLogEntry(value: unknown): value is ActivityLogEntry {
+  if (!isRecord(value)) return false;
+  return typeof value.id === "string" && value.id.length > 0 && value.id.length <= 128
+    && typeof value.timestamp === "string" && value.timestamp.length > 0 && value.timestamp.length <= 64
+    && (value.level === "info" || value.level === "warn" || value.level === "error")
+    && (value.operation === "session" || value.operation === "upload" || value.operation === "download" || value.operation === "queue" || value.operation === "api" || value.operation === "client")
+    && typeof value.context === "string" && value.context.length > 0 && value.context.length <= 256
+    && typeof value.title === "string" && value.title.length > 0 && value.title.length <= 256
+    && typeof value.detail === "string" && value.detail.length <= 4_096
+    && (value.response === undefined || isRecord(value.response));
+}
+
+function activityRequestSignal(controller: AbortController): AbortSignal {
+  return AbortSignal.any([controller.signal, AbortSignal.timeout(10_000)]);
+}
+
+function cancelActivityFlushTimer(): void {
+  if (activityFlushTimer === undefined) return;
+  window.clearTimeout(activityFlushTimer);
+  activityFlushTimer = undefined;
+}
+
+function scheduleActivityFlush(delay = ACTIVITY_FLUSH_DELAY_MS): void {
+  if (!authenticated || pendingActivityEntries.length === 0 || activityFlushTimer !== undefined) return;
+  activityFlushTimer = window.setTimeout(() => {
+    activityFlushTimer = undefined;
+    void requestActivityFlush();
+  }, delay);
+}
+
+function requeueActivityBatch(batch: ActivityLogEntry[]): void {
+  const pendingIds = new Set(pendingActivityEntries.map((entry) => entry.id));
+  const retry = batch.filter((entry) => !pendingIds.has(entry.id));
+  pendingActivityEntries.unshift(...retry);
+  if (pendingActivityEntries.length > MAX_ACTIVITY_ENTRIES) pendingActivityEntries.splice(MAX_ACTIVITY_ENTRIES);
+}
+
+function retryDelay(): number {
+  return Math.min(ACTIVITY_RETRY_MAX_DELAY_MS, ACTIVITY_RETRY_BASE_DELAY_MS * 2 ** Math.min(activityRetryAttempt - 1, 4));
+}
+
+async function flushActivityEntries(generation: number, controller: AbortController): Promise<void> {
+  if (generation !== sessionGeneration || !authenticated || activityPersistenceController !== controller || pendingActivityEntries.length === 0) return;
+  const batch = takeActivityBatch(pendingActivityEntries);
+  pendingActivityEntries.splice(0, batch.length);
+  if (batch.length === 0) return;
+  try {
+    const response = await fetch("/api/activity-log", {
+      method: "POST",
+      credentials: "same-origin",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ entries: batch }),
+      signal: activityRequestSignal(controller),
+      keepalive: true,
+    });
+    if (response.status === 401) {
+      clearSessionState();
+      setVisible(false);
+      loginError.textContent = "Session expired, please sign in again";
+      loginError.hidden = false;
+      return;
+    }
+    if (!response.ok) throw new Error(`Activity history request failed (${response.status})`);
+    if (generation !== sessionGeneration || !authenticated || activityPersistenceController !== controller) return;
+    activityRetryAttempt = 0;
+    setActivityPersistenceStatus();
+  } catch (error: unknown) {
+    if (generation !== sessionGeneration || !authenticated || activityPersistenceController !== controller || error instanceof DOMException && error.name === "AbortError") return;
+    requeueActivityBatch(batch);
+    activityRetryAttempt = Math.min(activityRetryAttempt + 1, 5);
+    scheduleActivityFlush(retryDelay());
+    setActivityPersistenceStatus("Activity history unavailable · recent events remain local");
+    return;
+  }
+  if (generation === sessionGeneration && authenticated && activityPersistenceController === controller && pendingActivityEntries.length > 0) {
+    scheduleActivityFlush();
+  }
+}
+
+function requestActivityFlush(): Promise<void> {
+  if (!authenticated || pendingActivityEntries.length === 0 || !activityPersistenceController) return Promise.resolve();
+  if (activityFlushPromise) return activityFlushPromise;
+  const generation = sessionGeneration;
+  const controller = activityPersistenceController;
+  const promise = flushActivityEntries(generation, controller).finally(() => {
+    if (activityFlushPromise === promise) activityFlushPromise = undefined;
+  });
+  activityFlushPromise = promise;
+  return promise;
+}
+
+function queueActivityEntry(entry: ActivityLogEntry): void {
+  if (logoutPending || !authenticated || !activityPersistenceController) return;
+  pendingActivityEntries.push(entry);
+  if (pendingActivityEntries.length > MAX_ACTIVITY_ENTRIES) pendingActivityEntries.splice(0, pendingActivityEntries.length - MAX_ACTIVITY_ENTRIES);
+  if (pendingActivityEntries.length >= MAX_ACTIVITY_BATCH) void requestActivityFlush();
+  else scheduleActivityFlush();
+}
+
+async function drainActivityBeforeLogout(): Promise<void> {
+  cancelActivityFlushTimer();
+  const deadline = Date.now() + ACTIVITY_LOGOUT_DRAIN_MS;
+  let attempts = 0;
+  while (authenticated && (pendingActivityEntries.length > 0 || activityFlushPromise) && attempts < 3) {
+    const remaining = deadline - Date.now();
+    if (remaining <= 0) break;
+    attempts += 1;
+    const flush = requestActivityFlush();
+    await Promise.race([
+      flush,
+      new Promise<void>((resolve) => { window.setTimeout(resolve, remaining); }),
+    ]);
+  }
+  cancelActivityFlushTimer();
+}
+
+function flushActivityOnPageHide(): void {
+  if (logoutPending || !authenticated || !activityPersistenceController || pendingActivityEntries.length === 0) return;
+  cancelActivityFlushTimer();
+  const generation = sessionGeneration;
+  const controller = activityPersistenceController;
+  const batch = takeActivityBatch(pendingActivityEntries);
+  pendingActivityEntries.splice(0, batch.length);
+  if (batch.length === 0) return;
+  const body = JSON.stringify({ entries: batch });
+  try {
+    void fetch("/api/activity-log", {
+      method: "POST",
+      credentials: "same-origin",
+      headers: { "Content-Type": "application/json" },
+      body,
+      keepalive: true,
+    }).then((response) => {
+      if (response.status === 401) {
+        clearSessionState();
+        setVisible(false);
+        loginError.textContent = "Session expired, please sign in again";
+        loginError.hidden = false;
+        return;
+      }
+      if (response.ok || generation !== sessionGeneration || !authenticated || activityPersistenceController !== controller) return;
+      requeueActivityBatch(batch);
+      scheduleActivityFlush();
+    }).catch(() => {
+      if (generation !== sessionGeneration || !authenticated || activityPersistenceController !== controller) return;
+      requeueActivityBatch(batch);
+      scheduleActivityFlush();
+    });
+  } catch {
+    requeueActivityBatch(batch);
+    scheduleActivityFlush();
+  }
+}
+
+async function hydrateActivity(): Promise<void> {
+  if (!authenticated || !activityPersistenceController) return;
+  const generation = sessionGeneration;
+  const controller = activityPersistenceController;
+  try {
+    const response = await fetch("/api/activity-log", { credentials: "same-origin", signal: activityRequestSignal(controller) });
+    if (generation !== sessionGeneration || !authenticated) return;
+    const body = parseResponse(await response.text());
+    if (response.status === 401) {
+      clearSessionState();
+      setVisible(false);
+      loginError.textContent = "Session expired, please sign in again";
+      loginError.hidden = false;
+      return;
+    }
+    if (!response.ok || !isRecord(body) || !Array.isArray(body.entries)) throw new Error("Activity history is unavailable");
+    const seenIds = new Set(activities.map((entry) => entry.id));
+    const persisted = body.entries.filter((entry): entry is ActivityLogEntry => {
+      if (!isActivityLogEntry(entry) || seenIds.has(entry.id)) return false;
+      seenIds.add(entry.id);
+      return true;
+    });
+    const combined = [...activities, ...persisted];
+    combined.sort((left, right) => Date.parse(right.timestamp) - Date.parse(left.timestamp));
+    activities.splice(0, activities.length, ...combined.slice(0, MAX_ACTIVITY_ENTRIES));
+    renderActivity();
+    setActivityPersistenceStatus();
+  } catch (error: unknown) {
+    if (generation !== sessionGeneration || error instanceof DOMException && error.name === "AbortError") return;
+    setActivityPersistenceStatus("Activity history unavailable · recent events remain local");
+  }
 }
 
 function addActivity(
@@ -230,6 +449,7 @@ function addActivity(
   activities.splice(MAX_ACTIVITY_ENTRIES);
   if (selectedActivityId && !activities.some((activity) => activity.id === selectedActivityId)) selectedActivityId = undefined;
   renderActivity();
+  queueActivityEntry(entry);
 }
 
 function activityTime(timestamp: string): string {
@@ -532,7 +752,11 @@ loginForm.addEventListener("submit", async (event) => {
     }
     passwordInput.value = "";
     clearSessionState();
+    authenticated = true;
+    activityPersistenceController = new AbortController();
     setVisible(true);
+    await hydrateActivity();
+    if (!authenticated || logoutPending) return;
     addActivity("Session", "Signed in", "info", "session", "authenticated session");
     void refreshApiStatus();
   } catch (error: unknown) {
@@ -552,6 +776,11 @@ logoutButton.addEventListener("click", async () => {
   logoutPending = true;
   deskView.inert = true;
   deskView.setAttribute("aria-busy", "true");
+  try {
+    await drainActivityBeforeLogout();
+  } catch {
+    // Logout must still complete when a persistence drain encounters an unexpected client failure.
+  }
   clearSessionState();
   try {
     await fetch("/api/logout", { method: "POST", credentials: "same-origin", signal: AbortSignal.timeout(10_000) });
@@ -564,6 +793,8 @@ logoutButton.addEventListener("click", async () => {
     setVisible(false);
   }
 });
+
+window.addEventListener("pagehide", flushActivityOnPageHide);
 
 fileInput.addEventListener("change", () => {
   if (logoutPending) {
@@ -648,8 +879,12 @@ async function boot(): Promise<void> {
     const body = parseResponse(await response.text());
     if (isRecord(body) && body.authenticated === true) {
       clearSessionState();
+      authenticated = true;
+      activityPersistenceController = new AbortController();
       setVisible(true);
       if (typeof body.maxUploadBytes === "number") uploadLimit.textContent = `Max file size · ${displayBytes(body.maxUploadBytes)}`;
+      await hydrateActivity();
+      if (!authenticated) return;
       void refreshApiStatus();
     } else {
       clearSessionState();

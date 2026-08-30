@@ -7,6 +7,7 @@ export interface AppConfig {
   nodeEnv: string;
   cookieSecure: boolean;
   maxUploadBytes: number;
+  activityLogPath?: string;
 }
 
 const DEFAULT_MAX_UPLOAD_BYTES = 300 * 1024 * 1024 * 1024;
@@ -45,5 +46,6 @@ export function loadConfig(): AppConfig {
     nodeEnv,
     cookieSecure,
     maxUploadBytes: positiveInteger("MAX_UPLOAD_BYTES", DEFAULT_MAX_UPLOAD_BYTES),
+    ...(process.env.ACTIVITY_LOG_PATH ? { activityLogPath: process.env.ACTIVITY_LOG_PATH } : {}),
   };
 }
