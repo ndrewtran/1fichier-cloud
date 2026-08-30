@@ -10,6 +10,10 @@ const TOKEN_PATH = "/v1/download/get_token.cgi";
 const UPLOAD_SERVER_PATH = "/v1/upload/get_upload_server.cgi";
 const USER_INFO_PATH = "/v1/user/info.cgi";
 const MAX_API_RESPONSE_BYTES = 256 * 1024;
+const MAX_DIAGNOSTIC_CHARS = 4_096;
+const MAX_DIAGNOSTIC_DEPTH = 4;
+const MAX_DIAGNOSTIC_KEYS = 32;
+const MAX_DIAGNOSTIC_ITEMS = 24;
 export const API_STATUS_CACHE_TTL_MS = 6 * 60 * 1000;
 
 export type FichierApiStatus = "connected" | "not_configured" | "invalid_key" | "unavailable";
@@ -36,17 +40,30 @@ export interface UploadResponse {
   body: string;
 }
 
+/** A bounded upstream response safe to expose to the authenticated client. */
+export interface FichierResponseDiagnostic {
+  status?: number;
+  body?: unknown;
+}
+
+export interface FichierApiStatusResult {
+  status: FichierApiStatus;
+  response?: FichierResponseDiagnostic;
+}
+
 export type Fetcher = (input: string | URL, init?: RequestInit) => Promise<Response>;
 
 export class FichierError extends Error {
   public readonly statusCode: number | undefined;
   public readonly upstreamMessage: string | undefined;
+  public readonly response: FichierResponseDiagnostic | undefined;
 
-  public constructor(message: string, statusCode?: number, upstreamMessage?: string) {
+  public constructor(message: string, statusCode?: number, upstreamMessage?: string, response?: FichierResponseDiagnostic) {
     super(message);
     this.name = "FichierError";
     this.statusCode = statusCode;
-    this.upstreamMessage = upstreamMessage;
+    this.upstreamMessage = upstreamMessage ? sanitizeDiagnosticText(upstreamMessage) : undefined;
+    this.response = response ? createResponseDiagnostic(statusCode ?? response.status, response.body) : undefined;
   }
 }
 
@@ -66,6 +83,48 @@ function responseMessage(value: unknown): string | undefined {
     ?? stringField(value, "error")
     ?? stringField(value, "status")
     ?? stringField(value, "Status");
+}
+
+const SENSITIVE_DIAGNOSTIC_KEY = /authorization|(?:api[_-]?)?key|password|passwd|cookie|secret|session|credential|bearer|token|auth(?:entication|orization)?|pass(?:word|phrase)?/i;
+
+function sanitizeDiagnosticText(value: string): string {
+  return value
+    .slice(0, MAX_DIAGNOSTIC_CHARS)
+    .replace(/https?:\/\/[^/\s@]+:[^@\s]+@/gi, "https://[redacted]@")
+    .replace(/(["']?)(authorization|(?:api[_-]?)?key|password|passwd|cookie|secret|session|credential|bearer|token|auth(?:entication|orization)?|pass(?:word|phrase)?)\1\s*[:=]\s*(?:(?:bearer|basic)\s+)?(?:"[^"]*"|'[^']*'|[^\s,;}]+)/gi, (_match, quote: string, key: string) => `${quote}${key}${quote}: [redacted]`);
+}
+
+function sanitizeDiagnosticValue(value: unknown, depth = 0): unknown {
+  if (depth > MAX_DIAGNOSTIC_DEPTH) return "[truncated]";
+  if (typeof value === "string") return sanitizeDiagnosticText(value);
+  if (typeof value === "number") return Number.isFinite(value) ? value : "[invalid number]";
+  if (typeof value === "boolean" || value === null) return value;
+  if (Array.isArray(value)) return value.slice(0, MAX_DIAGNOSTIC_ITEMS).map((item) => sanitizeDiagnosticValue(item, depth + 1));
+  if (!isRecord(value)) return "[unsupported value]";
+  const result: Record<string, unknown> = {};
+  for (const [key, item] of Object.entries(value).slice(0, MAX_DIAGNOSTIC_KEYS)) {
+    if (SENSITIVE_DIAGNOSTIC_KEY.test(key)) continue;
+    result[key.slice(0, 80)] = sanitizeDiagnosticValue(item, depth + 1);
+  }
+  return result;
+}
+
+export function createResponseDiagnostic(status: number | undefined, body: unknown): FichierResponseDiagnostic {
+  const diagnostic: FichierResponseDiagnostic = {};
+  if (typeof status === "number" && Number.isSafeInteger(status) && status > 0) diagnostic.status = status;
+  if (typeof body === "string") {
+    const text = sanitizeDiagnosticText(body);
+    if (text) diagnostic.body = text;
+  } else if (body !== undefined) {
+    diagnostic.body = sanitizeDiagnosticValue(body);
+  }
+  return diagnostic;
+}
+
+function networkResponse(error: unknown): FichierResponseDiagnostic {
+  const name = error instanceof Error && error.name ? error.name : "Error";
+  const message = error instanceof Error && error.message ? error.message : "Network request failed";
+  return createResponseDiagnostic(undefined, { kind: "network", name, message });
 }
 
 async function readResponseBody(response: Response): Promise<string> {
@@ -97,7 +156,7 @@ async function parseJsonBody(response: Response): Promise<unknown> {
   try {
     return JSON.parse(text) as unknown;
   } catch {
-    throw new FichierError("1fichier returned an invalid response", response.status);
+    throw new FichierError("1fichier returned an invalid response", response.status, undefined, createResponseDiagnostic(response.status, text));
   }
 }
 
@@ -170,8 +229,8 @@ export class FichierClient {
   private readonly apiKey: string;
   private readonly limiter: ApiRateLimiter;
   private readonly fetcher: Fetcher;
-  private statusCache: { status: FichierApiStatus; expiresAt: number } | undefined;
-  private statusRequest: Promise<FichierApiStatus> | undefined;
+  private statusCache: { status: FichierApiStatus; expiresAt: number; response?: FichierResponseDiagnostic } | undefined;
+  private statusRequest: Promise<FichierApiStatusResult> | undefined;
 
   public constructor(apiKey: string, fetcher: Fetcher = globalThis.fetch.bind(globalThis), limiter = new ApiRateLimiter(3)) {
     this.apiKey = apiKey;
@@ -181,24 +240,35 @@ export class FichierClient {
 
   /** Validate the configured key without exposing account details to callers. */
   public getApiStatus(): Promise<FichierApiStatus> {
-    if (PLACEHOLDER_API_KEYS.has(this.apiKey)) return Promise.resolve("not_configured");
+    return this.getApiStatusResult().then((result) => result.status);
+  }
+
+  public getApiStatusResponse(): FichierResponseDiagnostic | undefined {
+    return this.statusCache?.response;
+  }
+
+  /** Validate the configured key and retain only bounded diagnostics for failures. */
+  public getApiStatusResult(): Promise<FichierApiStatusResult> {
+    if (PLACEHOLDER_API_KEYS.has(this.apiKey)) return Promise.resolve({ status: "not_configured" });
 
     const now = Date.now();
-    if (this.statusCache && this.statusCache.expiresAt > now) return Promise.resolve(this.statusCache.status);
+    if (this.statusCache && this.statusCache.expiresAt > now) {
+      return Promise.resolve(this.statusCache.response ? { status: this.statusCache.status, response: this.statusCache.response } : { status: this.statusCache.status });
+    }
     if (this.statusRequest) return this.statusRequest;
 
     const request = this.fetchApiStatus()
-      .catch((): FichierApiStatus => "unavailable")
-      .then((status) => {
-        this.statusCache = { status, expiresAt: Date.now() + API_STATUS_CACHE_TTL_MS };
+      .catch((error: unknown): FichierApiStatusResult => ({ status: "unavailable", response: networkResponse(error) }))
+      .then((result) => {
+        this.statusCache = { status: result.status, expiresAt: Date.now() + API_STATUS_CACHE_TTL_MS, ...(result.response ? { response: result.response } : {}) };
         this.statusRequest = undefined;
-        return status;
+        return result;
       });
     this.statusRequest = request;
     return request;
   }
 
-  private async fetchApiStatus(): Promise<FichierApiStatus> {
+  private async fetchApiStatus(): Promise<FichierApiStatusResult> {
     try {
       const response = await this.limiter.enqueue(() => this.fetcher(`${API_ORIGIN}${USER_INFO_PATH}`, {
         method: "POST",
@@ -208,20 +278,24 @@ export class FichierClient {
         signal: AbortSignal.timeout(10_000),
       }));
       if (response.status === 401) {
-        await response.body?.cancel();
-        return "invalid_key";
+        return { status: "invalid_key", response: createResponseDiagnostic(response.status, await readResponseBody(response)) };
       }
       // A 403 can also indicate an upstream flood or temporary IP lock.
       if (!response.ok) {
-        await response.body?.cancel();
-        return "unavailable";
+        const text = await readResponseBody(response);
+        let body: unknown = text;
+        try { body = text ? JSON.parse(text) as unknown : {}; } catch { /* retain bounded text */ }
+        return { status: "unavailable", response: createResponseDiagnostic(response.status, body) };
       }
       const body = await parseJsonBody(response);
-      if (!isRecord(body)) return "unavailable";
+      if (!isRecord(body)) return { status: "unavailable", response: createResponseDiagnostic(response.status, body) };
       const email = body.email;
-      return typeof email === "string" && email.trim().length > 0 ? "connected" : "unavailable";
-    } catch {
-      return "unavailable";
+      return typeof email === "string" && email.trim().length > 0
+        ? { status: "connected" }
+        : { status: "unavailable", response: createResponseDiagnostic(response.status, body) };
+    } catch (error: unknown) {
+      if (error instanceof FichierError && error.response) return { status: "unavailable", response: error.response };
+      return { status: "unavailable", response: networkResponse(error) };
     }
   }
 
@@ -245,14 +319,14 @@ export class FichierClient {
       }
       const body = await parseJsonBody(response);
       if (!response.ok) {
-        throw new FichierError("Could not get an upload server", response.status, responseMessage(body));
+        throw new FichierError("Could not get an upload server", response.status, responseMessage(body), createResponseDiagnostic(response.status, body));
       }
-      if (!isRecord(body)) throw new FichierError("1fichier returned an invalid upload server", response.status);
+      if (!isRecord(body)) throw new FichierError("1fichier returned an invalid upload server", response.status, undefined, createResponseDiagnostic(response.status, body));
       const url = stringField(body, "url");
       const id = stringField(body, "id");
-      if (!url || !id) throw new FichierError("1fichier returned an incomplete upload server", response.status);
+      if (!url || !id) throw new FichierError("1fichier returned an incomplete upload server", response.status, undefined, createResponseDiagnostic(response.status, body));
       const normalizedUrl = normalizeUploadServerUrl(url);
-      if (!normalizedUrl) throw new FichierError("1fichier returned an unsafe upload server", response.status);
+      if (!normalizedUrl) throw new FichierError("1fichier returned an unsafe upload server", response.status, undefined, createResponseDiagnostic(response.status, body));
       return { url: normalizedUrl, id };
     });
   }
@@ -272,7 +346,7 @@ export class FichierClient {
       });
       const body = await parseJsonBody(response);
       if (!response.ok) {
-        throw new FichierError("1fichier could not finish the upload", response.status, responseMessage(body));
+        throw new FichierError("1fichier could not finish the upload", response.status, responseMessage(body), createResponseDiagnostic(response.status, body));
       }
       return body;
     });
@@ -304,9 +378,10 @@ export class FichierClient {
             : "Could not create a download token",
           response.status,
           message,
+          createResponseDiagnostic(response.status, body),
         );
       }
-      if (!isRecord(body)) throw new FichierError("1fichier returned an invalid download token", response.status);
+      if (!isRecord(body)) throw new FichierError("1fichier returned an invalid download token", response.status, undefined, createResponseDiagnostic(response.status, body));
       const rawUrl = stringField(body, "url");
       if (!rawUrl) {
         const detail = responseMessage(body);
@@ -314,10 +389,11 @@ export class FichierClient {
           "Could not create a download token. This capability requires a Premium, Premium GOLD, Access, or CDN plan",
           response.status,
           detail,
+          createResponseDiagnostic(response.status, body),
         );
       }
       const url = normalizeDownloadTokenUrl(rawUrl);
-      if (!url) throw new FichierError("1fichier returned an unsafe download token", response.status);
+      if (!url) throw new FichierError("1fichier returned an unsafe download token", response.status, undefined, createResponseDiagnostic(response.status, body));
       const token: DownloadToken = { url };
       const status = stringField(body, "status");
       const message = stringField(body, "message");

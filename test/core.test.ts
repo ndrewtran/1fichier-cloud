@@ -5,7 +5,7 @@ import test, { after, before } from "node:test";
 import { Readable } from "node:stream";
 import { createSession, LoginThrottleStore, verifySession } from "../src/auth.js";
 import { type AppConfig } from "../src/config.js";
-import { API_STATUS_CACHE_TTL_MS, normalizeFichierLink, FichierClient, type DownloadToken, type FichierApiStatus, type UploadServer, type UploadResponse } from "../src/1fichier.js";
+import { API_STATUS_CACHE_TTL_MS, createResponseDiagnostic, normalizeFichierLink, FichierClient, FichierError, type DownloadToken, type FichierApiStatus, type UploadServer, type UploadResponse } from "../src/1fichier.js";
 import { ApiRateLimiter } from "../src/rate-limit.js";
 import { configureServerTimeouts, createApp, UPLOAD_REQUEST_TIMEOUT_MS } from "../src/server.js";
 
@@ -32,6 +32,56 @@ test("canonical link validation rejects arbitrary hosts and query strings", () =
   assert.equal(normalizeFichierLink("https://1fichier.com/?ABCde"), null);
   assert.equal(normalizeFichierLink("https://evil.example/?abcde"), null);
   assert.equal(normalizeFichierLink("https://1fichier.com/?abcde&redirect=https://evil.example"), null);
+});
+
+test("upstream diagnostics are bounded and redact credentials", () => {
+  const diagnostic = createResponseDiagnostic(502, {
+    message: "upstream refused request",
+    Authorization: "Bearer do-not-expose",
+    apiKey: "do-not-expose",
+    password: "do-not-expose",
+    pass: "do-not-expose",
+    token: "do-not-expose",
+    nested: { detail: "safe context" },
+  });
+  assert.equal(diagnostic.status, 502);
+  assert.deepEqual(diagnostic.body, { message: "upstream refused request", nested: { detail: "safe context" } });
+
+  const bounded = createResponseDiagnostic(500, "x".repeat(20_000));
+  assert.equal(typeof bounded.body, "string");
+  assert.equal((bounded.body as string).length, 4_096);
+
+  const text = createResponseDiagnostic(500, '{"token":"do-not-expose","message":"safe"}');
+  assert.equal(text.body, '{"token": [redacted],"message":"safe"}');
+
+  const headerText = createResponseDiagnostic(401, "Authorization: Bearer do-not-expose");
+  assert.equal(headerText.body, "Authorization: [redacted]");
+  const passText = createResponseDiagnostic(401, "pass: do-not-expose");
+  assert.equal(passText.body, "pass: [redacted]");
+});
+
+test("failed API calls retain a safe response diagnostic", async () => {
+  const client = new FichierClient("api-key", async () => new Response(JSON.stringify({ error: "plan required", token: "private-token" }), { status: 403 }));
+  await assert.rejects(client.getDownloadToken("https://1fichier.com/?abcde"), (error: unknown) => {
+    assert.ok(error instanceof FichierError);
+    assert.deepEqual(error.response, { status: 403, body: { error: "plan required" } });
+    return true;
+  });
+
+  const plainTextClient = new FichierClient("api-key", async () => new Response("gateway unavailable", { status: 502 }));
+  await assert.rejects(plainTextClient.getDownloadToken("https://1fichier.com/?abcde"), (error: unknown) => {
+    assert.ok(error instanceof FichierError);
+    assert.deepEqual(error.response, { status: 502, body: "gateway unavailable" });
+    return true;
+  });
+});
+
+test("API status network diagnostics retain a safe error name and message", async () => {
+  const client = new FichierClient("api-key", async () => { throw new TypeError("socket closed"); });
+  assert.deepEqual(await client.getApiStatusResult(), {
+    status: "unavailable",
+    response: { body: { kind: "network", name: "TypeError", message: "socket closed" } },
+  });
 });
 
 test("API client retries upload server with POST only after method rejection", async () => {
@@ -269,6 +319,45 @@ test("Nightdesk keeps session and API status visible with mobile sign-out", asyn
   assert.match(styles, /\.night-header \.header-actions \{ display: flex; flex: 1 0 100%;/);
   assert.match(mockup, /<span class="status status--ok">signed in<\/span>\s*<span class="status status--ok">API connected<\/span>/);
   assert.doesNotMatch(mockup, /<span class="status status--working">connected<\/span>/);
+});
+
+test("Nightdesk wires recent activity buttons to the full bottom log drawer", async () => {
+  const [page, script, styles] = await Promise.all([
+    readFile(new URL("../src/public/index.html", import.meta.url), "utf8"),
+    readFile(new URL("../src/public/app.ts", import.meta.url), "utf8"),
+    readFile(new URL("../src/public/styles.css", import.meta.url), "utf8"),
+  ]);
+  assert.match(page, /id="activity-drawer"[^>]*aria-label="Activity log drawer"/);
+  assert.match(page, /id="drawer-minimize"[^>]*data-drawer-action="minimize"/);
+  assert.match(page, /id="drawer-close"[^>]*data-drawer-action="close"/);
+  assert.match(script, /class="activity-item" type="button" aria-pressed=/);
+  assert.match(script, /data-activity-id=/);
+  assert.match(script, /<details class="log-response"><summary>Response<\/summary>/);
+  assert.match(script, /scrollIntoView\(\{ block: "nearest" \}\)/);
+  assert.match(script, /const text = value\.trim\(\);/);
+  assert.match(script, /catch \{ return sanitizeResponseText\(text\); \}/);
+  assert.match(script, /pass\(\?:word\|phrase\)\?/);
+  assert.match(script, /const MAX_ACTIVITY_ENTRIES = 2_000/);
+  assert.match(script, /activities\.splice\(MAX_ACTIVITY_ENTRIES\)/);
+  assert.match(script, /activities\.length = 0/);
+  assert.match(script, /selectedActivityId = undefined/);
+  assert.match(script, /drawerState = "closed"/);
+  assert.match(script, /lastLoggedApiStatus = undefined/);
+  assert.match(script, /drawerRestore\.focus\(\)/);
+  assert.match(script, /drawerOpen\.focus\(\)/);
+  assert.match(script, /function focusDrawerContent\(\)/);
+  assert.match(script, /drawerMinimize\.focus\(\)/);
+  assert.match(script, /if \(selectedActivityId && !activities\.some/);
+  assert.match(script, /let logoutPending = false/);
+  assert.match(script, /deskView\.inert = true/);
+  assert.match(script, /AbortSignal\.timeout\(10_000\)/);
+  assert.match(script, /if \(logoutPending\) return;/);
+  const logoutStart = script.indexOf('logoutButton.addEventListener("click"');
+  assert.ok(logoutStart >= 0);
+  const logoutBlock = script.slice(logoutStart, script.indexOf("fileInput.addEventListener", logoutStart));
+  assert.match(logoutBlock, /deskView\.inert = true[\s\S]*await fetch\([\s\S]*finally[\s\S]*deskView\.inert = false[\s\S]*setVisible\(false\)/);
+  assert.match(page, /id="drawer-restore"[^>]*data-drawer-action="restore"/);
+  assert.match(styles, /\.log-drawer \{[^}]*border-top: 2px solid var\(--amber\)/s);
 });
 
 test("login and canonical download handoff use the mocked client", async () => {

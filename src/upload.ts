@@ -1,7 +1,7 @@
 import type { Request, Response } from "express";
 import Busboy from "busboy";
 import type { Readable } from "node:stream";
-import { FichierClient, FichierError, parseUploadLinks, uploadStatusUrl } from "./1fichier.js";
+import { createResponseDiagnostic, FichierClient, FichierError, parseUploadLinks, uploadStatusUrl, type FichierResponseDiagnostic } from "./1fichier.js";
 
 const MAX_MULTIPART_OVERHEAD = 1024 * 1024;
 
@@ -28,6 +28,11 @@ function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : "Upload failed";
 }
 
+function errorResponse(error: unknown): FichierResponseDiagnostic {
+  if (error instanceof FichierError && error.response) return error.response;
+  return createResponseDiagnostic(undefined, { error: error instanceof Error ? error.message : "Upload failed" });
+}
+
 async function processFile(
   file: Readable,
   filename: string,
@@ -37,10 +42,14 @@ async function processFile(
   const server = await client.getUploadServer();
   const uploadResponse = await client.uploadMultipart(server, filename, size, file);
   if (uploadResponse.statusCode === 500) {
-    throw new FichierError("1fichier rejected the upload", 500, uploadResponse.body.slice(0, 400));
+    let body: unknown = uploadResponse.body;
+    try { body = uploadResponse.body ? JSON.parse(uploadResponse.body) as unknown : {}; } catch { /* preserve bounded text */ }
+    throw new FichierError("1fichier rejected the upload", 500, typeof body === "string" ? body : undefined, createResponseDiagnostic(500, body));
   }
   if (uploadResponse.statusCode !== 200 && uploadResponse.statusCode !== 302) {
-    throw new FichierError("1fichier returned an unexpected upload response", uploadResponse.statusCode);
+    let body: unknown = uploadResponse.body;
+    try { body = uploadResponse.body ? JSON.parse(uploadResponse.body) as unknown : {}; } catch { /* preserve bounded text */ }
+    throw new FichierError("1fichier returned an unexpected upload response", uploadResponse.statusCode, typeof body === "string" ? body : undefined, createResponseDiagnostic(uploadResponse.statusCode, body));
   }
 
   let immediateBody: unknown = null;
@@ -142,5 +151,5 @@ export async function handleUpload(
 
 export function sendUploadError(response: Response, error: unknown): void {
   const status = error instanceof FichierError && error.statusCode === 500 ? 502 : 502;
-  response.status(status).json({ error: errorMessage(error) });
+  response.status(status).json({ error: errorMessage(error), response: errorResponse(error) });
 }
