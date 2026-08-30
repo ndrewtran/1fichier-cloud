@@ -21,7 +21,11 @@ Open `http://localhost:3000`. For local HTTP, set `COOKIE_SECURE=false` in `.env
 docker compose up --build -d
 ```
 
-The image listens on `0.0.0.0:3000` inside the container, runs as the non-root `node` user, and does not require a persistent volume. The compose example publishes it only on `127.0.0.1:3000`, so direct local access cannot spoof proxy headers. In Easypanel, deploy the Dockerfile, expose container port `3000`, and configure the three required secrets from `.env.example` as environment variables. Keep `COOKIE_SECURE=true` behind the HTTPS domain.
+The image listens on `0.0.0.0:3000` inside the container, runs as the non-root `node` user, and stores the bounded activity history at `/data/activity-log.jsonl`. The compose example publishes it only on `127.0.0.1:3000`, so direct local access cannot spoof proxy headers, and declares a named `activity-log-data` volume mounted at `/data`. In Easypanel, deploy the Dockerfile, expose container port `3000`, configure the three required secrets from `.env.example` as environment variables, and create a persistent volume named for example `activity-log-data` mounted at `/data`. Without that mount, activity history is lost when the container is replaced. Keep `COOKIE_SECURE=true` behind the HTTPS domain.
+
+`ACTIVITY_LOG_PATH` may be set when a different writable path is needed. The server creates the containing directory and JSONL file with restrictive permissions where the filesystem supports them. The authenticated activity endpoints hydrate the drawer after sign-in and accept small batches of sanitized events; login failures are never persisted.
+
+The JSONL writer is process-local, so configure Easypanel to run exactly one application replica per activity-log file. A fresh empty managed Docker/Easypanel volume inherits the image's `node` runtime ownership through Docker copy-up. An existing volume or host bind mount must be writable by UID/GID `1000:1000` (the container's `node` user). The browser makes a best-effort final batch flush during pagehide, but a sudden process or browser crash can still lose events that have not reached the server.
 
 ## Architecture and security
 
