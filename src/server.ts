@@ -12,9 +12,11 @@ import {
   setSessionCookie,
 } from "./auth.js";
 import {
+  createResponseDiagnostic,
   normalizeFichierLinks,
   FichierClient,
   FichierError,
+  type FichierResponseDiagnostic,
 } from "./1fichier.js";
 import { handleUpload, sendUploadError } from "./upload.js";
 
@@ -60,6 +62,11 @@ function publicError(error: unknown): string {
     return detail ? `${error.message}: ${detail}` : error.message;
   }
   return error instanceof Error ? error.message : "Request failed";
+}
+
+function publicResponse(error: unknown): FichierResponseDiagnostic {
+  if (error instanceof FichierError && error.response) return error.response;
+  return createResponseDiagnostic(undefined, { error: error instanceof Error ? error.message : "Request failed" });
 }
 
 function passwordMatches(input: string, expected: string): boolean {
@@ -122,9 +129,12 @@ export function createApp(config: AppConfig, client = new FichierClient(config.a
   app.get("/api/1fichier/status", async (request, response) => {
     if (!requireAuth(request, response, config)) return;
     try {
-      response.json({ status: await client.getApiStatus() });
-    } catch {
-      response.json({ status: "unavailable" });
+      const status = await client.getApiStatus();
+      const diagnostic = client.getApiStatusResponse();
+      if (diagnostic) response.json({ status, response: diagnostic });
+      else response.json({ status });
+    } catch (error: unknown) {
+      response.json({ status: "unavailable", response: publicResponse(error) });
     }
   });
 
@@ -170,13 +180,13 @@ export function createApp(config: AppConfig, client = new FichierClient(config.a
       return;
     }
 
-    const results: Array<{ link: string; token?: string; error?: string }> = [];
+    const results: Array<{ link: string; token?: string; error?: string; response?: FichierResponseDiagnostic }> = [];
     for (const link of normalized.links) {
       try {
         const token = await client.getDownloadToken(link, body.pass as string | undefined);
         results.push({ link, token: token.url });
       } catch (error: unknown) {
-        results.push({ link, error: publicError(error) });
+        results.push({ link, error: publicError(error), response: publicResponse(error) });
       }
     }
     response.status(results.some((result) => result.token) ? 200 : 502).json({ results });

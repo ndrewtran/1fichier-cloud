@@ -88,12 +88,30 @@
                 <ul id="download-queue" class="queue" aria-label="Download queue"></ul>
               </section>
             </div>
-          </div>
+            <section id="activity" class="activity-strip" aria-labelledby="activity-title">
+              <div class="activity-strip-title">
+                <h2 id="activity-title">Recent activity</h2>
+                <span>Select an event to inspect its log</span>
+              </div>
+              <ol id="activity-list" class="activity-list"></ol>
+            </section>
 
-          <aside id="activity" class="night-activity" aria-label="Recent activity">
-            <h2>Recent activity</h2>
-            <ol id="activity-list" class="activity-list"></ol>
-          </aside>
+            <section id="activity-drawer" class="log-drawer" aria-label="Activity log drawer" hidden>
+              <div class="drawer-bar">
+                <strong>Activity log <span class="quiet">· newest first</span></strong>
+                <div class="drawer-actions">
+                  <button id="drawer-minimize" type="button" data-drawer-action="minimize">Minimize</button>
+                  <button id="drawer-close" type="button" data-drawer-action="close">Close</button>
+                </div>
+              </div>
+              <ol id="activity-log" class="log-list" aria-label="Activity log"></ol>
+            </section>
+            <div id="drawer-peek" class="drawer-peek" hidden>
+              <span id="drawer-peek-label">Activity log minimized</span>
+              <button id="drawer-restore" type="button" data-drawer-action="restore">Open log</button>
+            </div>
+            <button id="drawer-open" class="drawer-open-button" type="button" data-drawer-action="restore" hidden>Show activity log</button>
+          </div>
         </div>
       </section>
     </main>
