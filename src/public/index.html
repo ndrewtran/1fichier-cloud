@@ -1,0 +1,101 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="description" content="A private, self-hosted 1fichier transfer desk." />
+    <title>1fichier / transfer desk</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <main id="app" class="shell" aria-live="polite">
+      <section id="login-view" class="login-view" aria-labelledby="login-title">
+        <div class="brand-box" aria-hidden="true">1f</div>
+        <h1 id="login-title">Transfer desk</h1>
+        <p>Private access to your 1fichier transfers.</p>
+        <form id="login-form" class="login-form">
+          <label for="password">App password</label>
+          <input id="password" name="password" type="password" autocomplete="current-password" required />
+          <button class="accent-button" type="submit">Sign in</button>
+          <p id="login-error" class="error-copy" role="alert" hidden></p>
+        </form>
+      </section>
+
+      <section id="desk-view" class="desk" hidden>
+        <header class="night-header">
+          <div class="brand-box" aria-hidden="true">1f</div>
+          <div>
+            <strong>1fichier / personal cloud</strong>
+            <span class="account">self-hosted client</span>
+          </div>
+          <div class="header-actions">
+            <span class="status status--working">connected</span>
+            <button id="logout-button" type="button">Sign out</button>
+          </div>
+        </header>
+
+        <div class="night-grid">
+          <nav class="night-nav" aria-label="Primary navigation">
+            <span class="nav-label">workspace</span>
+            <a href="#transfers" aria-current="page">Transfers <span id="transfer-count" class="nav-count">0</span></a>
+            <a href="#activity">Activity <span id="activity-count">0</span></a>
+            <span class="sync-state">API queue is live</span>
+          </nav>
+
+          <div class="night-content" id="transfers">
+            <div class="night-intro">
+              <div>
+                <h1>Transfer desk</h1>
+                <p>Move local files up, or bring remote 1fichier links down. Queues stay visible until they finish.</p>
+              </div>
+              <div class="storage-meter">
+                <strong>Streamed direct <span class="quiet">from this device</span></strong>
+                <span id="upload-limit">Upload limit loading</span>
+                <div class="progress" aria-label="Uploads stream directly without local storage"><span style="width: 100%"></span></div>
+              </div>
+            </div>
+
+            <div class="night-flows">
+              <section class="night-flow" aria-labelledby="upload-title">
+                <div class="section-title">
+                  <h2 id="upload-title">Upload local files</h2>
+                  <span id="upload-status" class="status status--waiting">ready</span>
+                </div>
+                <p class="flow-description">Choose up to 500 files. Each file streams through this client without being stored.</p>
+                <label class="file-action">
+                  <input id="file-input" class="sr-only" type="file" multiple />
+                  <span aria-hidden="true">＋</span> Choose local files
+                </label>
+                <span id="file-status" class="sr-only" aria-live="polite">No files selected</span>
+                <ul id="upload-queue" class="queue" aria-label="Upload queue"></ul>
+              </section>
+
+              <section class="night-flow" aria-labelledby="download-title">
+                <div class="section-title">
+                  <h2 id="download-title">Download from links</h2>
+                  <span id="download-status" class="status status--waiting">ready</span>
+                </div>
+                <p class="flow-description">Paste one or more canonical 1fichier URLs. One link per line.</p>
+                <form id="link-form" class="link-form">
+                  <textarea id="link-input" aria-label="1fichier download links" placeholder="https://1fichier.com/?abcde&#10;https://1fichier.com/?fghij"></textarea>
+                  <div class="link-controls">
+                    <input id="link-password" type="password" autocomplete="off" placeholder="Optional link password" aria-label="Optional link password" />
+                    <button class="accent-button" type="submit">Get download links</button>
+                  </div>
+                </form>
+                <p class="link-note">Token URLs expire quickly and are kept in this browser only.</p>
+                <ul id="download-queue" class="queue" aria-label="Download queue"></ul>
+              </section>
+            </div>
+          </div>
+
+          <aside id="activity" class="night-activity" aria-label="Recent activity">
+            <h2>Recent activity</h2>
+            <ol id="activity-list" class="activity-list"></ol>
+          </aside>
+        </div>
+      </section>
+    </main>
+    <script type="module" src="/app.js"></script>
+  </body>
+</html>

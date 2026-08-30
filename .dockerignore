@@ -1,0 +1,10 @@
+node_modules
+dist
+.git
+.gitignore
+.env
+.env.*
+!.env.example
+design/mockups
+test
+README.md
