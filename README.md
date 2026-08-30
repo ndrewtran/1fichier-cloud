@@ -26,6 +26,7 @@ The image listens on `0.0.0.0:3000` inside the container, runs as the non-root `
 ## Architecture and security
 
 - The Node/TypeScript server owns the API key and app password. The browser receives only session state and the links it explicitly requests.
+- The header separates the app session (`signed in`) from the 1fichier API status. The authenticated `GET /api/1fichier/status` check uses the official user-info endpoint, keeps the key server-side, and caches every result for at least six minutes. This stays below 1fichier's documented limits of one user-info request per minute per IP and one per five minutes per user; `SET_ME_IN_EASYPANEL` and the example key are reported as not configured without an upstream request.
 - Sessions are signed HMAC cookies with `HttpOnly`, `SameSite=Lax`, expiry, constant-time verification, and security headers. Login failures are throttled in memory per client IP. Mutation routes enforce same-origin `Origin` or `Referer` checks.
 - Uploads are parsed as one browser multipart file at a time and streamed directly to the 1fichier upload server. The server sends the upstream multipart request with an explicit `Content-Length`; it never buffers the file or follows the expected upload redirect. The browser queue supports up to the documented 500-file hard limit.
 - API control calls use a simple process-local queue at no more than three calls per second. The queue does not hold the multi-hour upload body.

@@ -112,8 +112,9 @@ textarea::placeholder, input::placeholder { color: #666; }
 }
 @media (max-width: 760px) {
   .desk { width: 100%; min-height: 100vh; margin: 0; }
-  .night-header { align-items: start; padding: 15px; }
-  .night-header .header-actions { display: none; }
+  .night-header { align-items: start; flex-wrap: wrap; gap: 12px; padding: 15px; }
+  .night-header > div:nth-child(2) { min-width: 0; flex: 1 1 0; }
+  .night-header .header-actions { display: flex; flex: 1 0 100%; justify-content: flex-end; gap: 10px; margin-left: 0; padding-top: 4px; border-top: 1px solid var(--line); }
   .night-grid { display: block; min-height: 0; }
   .night-nav { display: grid; grid-template-columns: repeat(2, 1fr); gap: 2px; padding: 8px; border-right: 0; border-bottom: 1px solid var(--line); }
   .night-nav .nav-label, .sync-state { display: none; }

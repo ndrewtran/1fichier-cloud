@@ -443,8 +443,9 @@
         .direction-switcher h1 { margin: 0; }
         .direction { min-height: calc(100vh - 91px); padding: 12px; }
         .mock-frame { min-height: calc(100vh - 115px); }
-        .night-header { align-items: start; padding: 15px; }
-        .night-header .header-actions { display: none; }
+        .night-header { align-items: start; flex-wrap: wrap; gap: 12px; padding: 15px; }
+        .night-header > div:nth-child(2) { min-width: 0; flex: 1 1 0; }
+        .night-header .header-actions { display: flex; flex: 1 0 100%; justify-content: flex-end; gap: 10px; margin-left: 0; padding-top: 4px; border-top: 1px solid var(--line); }
         .night-grid { display: block; min-height: 0; }
         .night-nav { display: grid; grid-template-columns: repeat(3, 1fr); gap: 2px; padding: 8px; border-right: 0; border-bottom: 1px solid var(--line); }
         .night-nav .nav-label, .sync-state { display: none; }
@@ -505,7 +506,8 @@
               <span class="account">account@example.com · self-hosted client</span>
             </div>
             <div class="header-actions">
-              <span class="status status--working">connected</span>
+              <span class="status status--ok">signed in</span>
+              <span class="status status--ok">API connected</span>
               <button type="button">Settings</button>
               <button type="button" aria-label="More account options">···</button>
             </div>
