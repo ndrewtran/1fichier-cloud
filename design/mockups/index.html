@@ -1,0 +1,801 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="description" content="Three static directions for a self-hosted 1fichier web client." />
+    <title>1fichier client / interface directions</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        --ink: #fff;
+        --muted: #a4a4a4;
+        --faint: #646464;
+        --line: #2b2b2b;
+        --line-strong: #444;
+        --panel: #090909;
+        --black: #000;
+        --mint: #7ae2bf;
+        --amber: #f5b84b;
+        --blue: #72b9ff;
+        --red: #ff6f61;
+        --green: #97e27a;
+        font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      }
+
+      * { box-sizing: border-box; }
+
+      html { background: #000; }
+
+      body {
+        margin: 0;
+        background: #000;
+        color: var(--ink);
+        font-size: 14px;
+        line-height: 1.4;
+      }
+
+      button,
+      input,
+      textarea { font: inherit; }
+
+      button,
+      label { cursor: pointer; }
+
+      button:focus-visible,
+      label:focus-within,
+      input:focus-visible,
+      textarea:focus-visible {
+        outline: 2px solid currentColor;
+        outline-offset: 3px;
+      }
+
+      button {
+        border: 1px solid var(--line-strong);
+        background: #111;
+        color: #fff;
+        padding: 9px 13px;
+        transition: background-color 120ms ease, border-color 120ms ease;
+      }
+
+      button:hover { background: #1b1b1b; border-color: #6a6a6a; }
+
+      .direction-switcher {
+        position: sticky;
+        z-index: 10;
+        top: 0;
+        display: flex;
+        align-items: center;
+        gap: 16px;
+        min-height: 56px;
+        padding: 9px clamp(16px, 4vw, 52px);
+        border-bottom: 1px solid #252525;
+        background: rgba(0, 0, 0, .96);
+      }
+
+      .direction-switcher h1 {
+        margin: 0 auto 0 0;
+        font-size: 12px;
+        font-weight: 600;
+        letter-spacing: .08em;
+        text-transform: uppercase;
+      }
+
+      .switcher-tabs { display: flex; gap: 5px; flex-wrap: wrap; }
+
+      .switcher-tab {
+        padding: 7px 10px;
+        border-color: #313131;
+        background: transparent;
+        color: #8a8a8a;
+        font-size: 12px;
+      }
+
+      .switcher-tab[aria-pressed="true"] {
+        border-color: #fff;
+        background: #fff;
+        color: #000;
+      }
+
+      .direction {
+        display: none;
+        min-height: calc(100vh - 56px);
+        padding: clamp(18px, 4vw, 48px);
+      }
+
+      .direction.is-active { display: block; }
+
+      .mock-frame {
+        width: min(1400px, 100%);
+        min-height: calc(100vh - 152px);
+        margin: 0 auto;
+        border: 1px solid var(--line);
+        background: var(--black);
+      }
+
+      .quiet { color: var(--muted); }
+      .faint { color: var(--faint); }
+      .mono { font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace; }
+      .nowrap { white-space: nowrap; }
+
+      .eyebrow {
+        margin: 0 0 8px;
+        color: var(--faint);
+        font: 11px/1.2 "SFMono-Regular", Consolas, monospace;
+        letter-spacing: .1em;
+        text-transform: uppercase;
+      }
+
+      .section-title {
+        display: flex;
+        align-items: baseline;
+        justify-content: space-between;
+        gap: 16px;
+        margin-bottom: 18px;
+      }
+
+      .section-title h2,
+      .section-title h3 { margin: 0; font-size: 18px; font-weight: 500; }
+      .section-title h3 { font-size: 15px; }
+      .section-title p { margin: 0; color: var(--muted); font-size: 12px; }
+
+      .status {
+        display: inline-flex;
+        align-items: center;
+        gap: 7px;
+        color: var(--muted);
+        font-size: 12px;
+      }
+
+      .status::before {
+        width: 6px;
+        height: 6px;
+        border-radius: 50%;
+        background: currentColor;
+        content: "";
+      }
+
+      .status--ok { color: var(--green); }
+      .status--working { color: var(--mint); }
+      .status--waiting { color: var(--amber); }
+      .status--error { color: var(--red); }
+
+      .progress {
+        height: 4px;
+        overflow: hidden;
+        background: #292929;
+      }
+
+      .progress > span { display: block; height: 100%; background: currentColor; }
+
+      .sr-only {
+        position: absolute;
+        width: 1px;
+        height: 1px;
+        padding: 0;
+        overflow: hidden;
+        clip: rect(0, 0, 0, 0);
+        white-space: nowrap;
+        border: 0;
+      }
+
+      /* Direction 01: Nightdesk, a split-pane operator workspace. */
+      .nightdesk { --accent: var(--mint); }
+
+      .nightdesk .mock-frame { border-top: 2px solid var(--accent); }
+
+      .night-header {
+        display: flex;
+        align-items: center;
+        gap: 18px;
+        min-height: 72px;
+        padding: 0 22px;
+        border-bottom: 1px solid var(--line);
+      }
+
+      .brand-box {
+        display: grid;
+        flex: 0 0 34px;
+        place-items: center;
+        width: 34px;
+        height: 34px;
+        border: 1px solid var(--accent);
+        color: var(--accent);
+        font-weight: 700;
+      }
+
+      .night-header strong { display: block; font-size: 14px; font-weight: 500; }
+      .night-header .account { color: var(--muted); font-size: 12px; }
+      .header-actions { display: flex; align-items: center; gap: 15px; margin-left: auto; }
+      .header-actions button { border-color: transparent; background: transparent; color: var(--muted); padding: 5px; }
+      .header-actions button:hover { color: #fff; }
+
+      .night-grid {
+        display: grid;
+        grid-template-columns: 180px minmax(0, 1fr) 224px;
+        min-height: calc(100vh - 226px);
+      }
+
+      .night-nav {
+        display: flex;
+        flex-direction: column;
+        gap: 2px;
+        padding: 18px 10px;
+        border-right: 1px solid var(--line);
+      }
+
+      .night-nav .nav-label {
+        margin: 5px 10px 9px;
+        color: var(--faint);
+        font: 10px "SFMono-Regular", Consolas, monospace;
+        letter-spacing: .12em;
+        text-transform: uppercase;
+      }
+
+      .night-nav a {
+        display: flex;
+        justify-content: space-between;
+        padding: 9px 10px;
+        color: var(--muted);
+        text-decoration: none;
+      }
+
+      .night-nav a:hover,
+      .night-nav a[aria-current="page"] { background: #121212; color: #fff; }
+      .night-nav a[aria-current="page"] { border-left: 2px solid var(--accent); padding-left: 8px; }
+      .nav-count { color: var(--accent); font-size: 12px; }
+
+      .sync-state {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        margin-top: auto;
+        padding: 10px;
+        border-top: 1px solid var(--line);
+        color: var(--muted);
+        font-size: 11px;
+      }
+
+      .sync-state::before { width: 6px; height: 6px; border-radius: 50%; background: var(--accent); content: ""; }
+
+      .night-content { min-width: 0; padding: 26px 26px 34px; }
+
+      .night-intro {
+        display: flex;
+        align-items: end;
+        justify-content: space-between;
+        gap: 20px;
+        margin-bottom: 26px;
+      }
+
+      .night-intro h2 { margin: 0; font-size: clamp(23px, 3vw, 32px); font-weight: 450; letter-spacing: -.03em; }
+      .night-intro p { max-width: 420px; margin: 6px 0 0; color: var(--muted); font-size: 13px; }
+      .storage-meter { min-width: 160px; color: var(--muted); font-size: 11px; }
+      .storage-meter strong { display: block; margin-bottom: 6px; color: #fff; font-weight: 500; }
+      .storage-meter .progress { margin-top: 7px; color: var(--accent); }
+
+      .night-flows { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); border-top: 1px solid var(--line); }
+      .night-flow { min-width: 0; padding: 21px 20px 0 0; }
+      .night-flow + .night-flow { padding: 21px 0 0 20px; border-left: 1px solid var(--line); }
+      .night-flow .section-title { margin-bottom: 15px; }
+      .flow-description { margin: -7px 0 16px; color: var(--muted); font-size: 12px; }
+
+      .file-action {
+        display: inline-flex;
+        align-items: center;
+        gap: 7px;
+        min-height: 36px;
+        border: 1px solid var(--accent);
+        color: var(--accent);
+        padding: 8px 11px;
+        font-size: 12px;
+      }
+
+      .file-action:hover { background: color-mix(in srgb, var(--accent) 12%, transparent); }
+
+      .queue { margin: 17px 0 0; padding: 0; list-style: none; }
+      .queue-row { padding: 12px 0; border-top: 1px solid var(--line); }
+      .queue-main { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; }
+      .queue-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .queue-meta { color: var(--muted); font: 11px "SFMono-Regular", Consolas, monospace; }
+      .queue-row .progress { margin-top: 9px; color: var(--accent); }
+      .queue-detail { display: flex; justify-content: space-between; gap: 8px; margin-top: 6px; color: var(--muted); font-size: 11px; }
+      .queue-detail .error-copy { color: var(--red); }
+
+      .link-form { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; }
+      textarea {
+        min-height: 68px;
+        resize: vertical;
+        border: 1px solid var(--line-strong);
+        border-radius: 0;
+        background: #050505;
+        color: #fff;
+        padding: 10px;
+        font: 12px/1.5 "SFMono-Regular", Consolas, monospace;
+      }
+
+      textarea::placeholder { color: #666; }
+      .accent-button { border-color: var(--accent); background: var(--accent); color: #000; font-weight: 600; }
+      .accent-button:hover { border-color: #fff; background: #fff; }
+
+      .night-activity { padding: 20px 15px 20px 20px; border-left: 1px solid var(--line); }
+      .night-activity h3 { margin: 0 0 18px; font-size: 13px; font-weight: 500; }
+      .activity-list { margin: 0; padding: 0; list-style: none; }
+      .activity-list li { position: relative; padding: 0 0 20px 17px; border-left: 1px solid var(--line-strong); color: var(--muted); font-size: 11px; }
+      .activity-list li::before { position: absolute; top: 3px; left: -4px; width: 7px; height: 7px; border: 1px solid var(--accent); background: #000; content: ""; }
+      .activity-list strong { display: block; margin-bottom: 3px; color: #fff; font-weight: 500; }
+      .activity-time { display: block; margin-top: 4px; color: var(--faint); font: 10px "SFMono-Regular", Consolas, monospace; }
+
+      /* Direction 02: Ledger, a table-first transfer register. */
+      .ledger { --accent: var(--amber); }
+      .ledger .mock-frame { border-color: #3a3020; }
+      .ledger-header { display: flex; align-items: center; justify-content: space-between; gap: 20px; padding: 21px 26px; border-bottom: 1px solid #3a3020; }
+      .ledger-brand { display: flex; align-items: center; gap: 12px; }
+      .ledger-brand-mark { color: var(--accent); font-size: 18px; font-weight: 700; letter-spacing: -.12em; }
+      .ledger-brand strong { display: block; font-size: 15px; font-weight: 500; }
+      .ledger-brand span { color: var(--muted); font: 11px "SFMono-Regular", Consolas, monospace; }
+      .ledger-top-actions { display: flex; align-items: center; gap: 16px; }
+      .ledger-top-actions .status { font-size: 11px; }
+      .ledger-top-actions button { border-color: #725624; background: transparent; color: var(--accent); }
+
+      .ledger-title { display: flex; align-items: end; justify-content: space-between; gap: 24px; padding: 26px; border-bottom: 1px solid var(--line); }
+      .ledger-title h2 { margin: 0; font-size: clamp(24px, 4vw, 38px); font-weight: 400; letter-spacing: -.05em; }
+      .ledger-title p { max-width: 400px; margin: 0; color: var(--muted); font-size: 12px; }
+      .ledger-stats { display: flex; gap: 26px; margin-top: 16px; }
+      .ledger-stat { display: grid; gap: 2px; }
+      .ledger-stat strong { font: 18px "SFMono-Regular", Consolas, monospace; color: var(--accent); font-weight: 400; }
+      .ledger-stat span { color: var(--muted); font-size: 11px; }
+
+      .ledger-body { display: grid; grid-template-columns: minmax(0, 1.1fr) minmax(0, .9fr); }
+      .ledger-panel { min-width: 0; padding: 23px 26px 28px; }
+      .ledger-panel + .ledger-panel { border-left: 1px solid var(--line); }
+      .ledger-panel .section-title { margin-bottom: 8px; }
+      .ledger-panel .section-title h3 { color: var(--accent); font-weight: 500; }
+      .ledger-panel > p { margin: 0 0 17px; color: var(--muted); font-size: 12px; }
+      .ledger-upload-row { display: flex; align-items: center; gap: 9px; padding-bottom: 17px; border-bottom: 1px solid var(--line); }
+      .ledger-file-label { display: inline-flex; min-height: 35px; align-items: center; border: 1px solid #615027; padding: 8px 11px; color: var(--accent); font-size: 12px; }
+      .ledger-file-label:hover { background: #1c160d; }
+      .ledger-upload-row button { padding: 8px 11px; border-color: var(--accent); background: var(--accent); color: #000; font-size: 12px; font-weight: 600; }
+      .selected-files { min-width: 0; overflow: hidden; color: var(--muted); font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
+
+      .ledger-table-wrap { overflow-x: auto; }
+      .ledger-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+      .ledger-table th { padding: 12px 8px 9px; color: var(--faint); font: 10px "SFMono-Regular", Consolas, monospace; font-weight: 400; letter-spacing: .08em; text-align: left; text-transform: uppercase; }
+      .ledger-table td { padding: 12px 8px; border-top: 1px solid var(--line); vertical-align: top; }
+      .ledger-table th:first-child, .ledger-table td:first-child { padding-left: 0; }
+      .ledger-table th:last-child, .ledger-table td:last-child { padding-right: 0; text-align: right; }
+      .ledger-table .file-cell { max-width: 260px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .ledger-table .file-cell small { display: block; margin-top: 3px; color: var(--muted); font: 10px "SFMono-Regular", Consolas, monospace; }
+      .ledger-table .progress { width: 100px; margin-top: 7px; margin-left: auto; color: var(--accent); }
+      .ledger-table .error { color: var(--red); }
+      .ledger-table .error small { color: var(--red); }
+      .ledger-table .status { font-size: 11px; }
+      .ledger-table .status::before { width: 5px; height: 5px; }
+      .table-action { border: 0; background: transparent; color: var(--muted); padding: 0; font-size: 11px; }
+      .table-action:hover { background: transparent; color: #fff; }
+
+      .ledger-link-form { display: grid; gap: 9px; }
+      .ledger-link-form textarea { min-height: 89px; border-color: #554a34; }
+      .ledger-link-form .accent-button { justify-self: start; }
+      .ledger-link-note { margin-top: 9px; color: var(--faint); font-size: 11px; }
+      .ledger-download-list { margin: 22px 0 0; padding: 0; list-style: none; }
+      .ledger-download-list li { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: start; gap: 14px; padding: 12px 0; border-top: 1px solid var(--line); }
+      .ledger-download-list strong { display: block; overflow: hidden; font-size: 12px; font-weight: 400; text-overflow: ellipsis; white-space: nowrap; }
+      .ledger-download-list small { display: block; margin-top: 3px; color: var(--muted); font: 10px "SFMono-Regular", Consolas, monospace; }
+      .ledger-download-list .error-copy { color: var(--red); font-size: 11px; }
+      .ledger-footer { display: flex; justify-content: space-between; gap: 20px; padding: 13px 26px; border-top: 1px solid var(--line); color: var(--muted); font: 11px "SFMono-Regular", Consolas, monospace; }
+      .ledger-footer strong { color: #fff; font-weight: 400; }
+
+      /* Direction 03: Relay, an action-first responsive handoff view. */
+      .relay { --accent: var(--blue); }
+      .relay .mock-frame { border: 0; }
+      .relay-header { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 18px 22px; border-bottom: 1px solid var(--line); }
+      .relay-logo { display: flex; align-items: center; gap: 10px; font-weight: 600; }
+      .relay-logo-mark { display: grid; place-items: center; width: 28px; height: 28px; background: var(--accent); color: #000; font-size: 11px; font-weight: 800; }
+      .relay-nav { display: flex; align-items: center; gap: 16px; color: var(--muted); font-size: 12px; }
+      .relay-nav a { color: inherit; text-decoration: none; }
+      .relay-nav a:hover { color: #fff; }
+      .relay-user { display: flex; align-items: center; gap: 8px; color: var(--muted); font-size: 12px; }
+      .relay-user i { display: block; width: 7px; height: 7px; border-radius: 50%; background: var(--green); }
+
+      .relay-layout { display: grid; grid-template-columns: minmax(260px, .7fr) minmax(0, 1.3fr); min-height: calc(100vh - 180px); }
+      .relay-lead { display: flex; flex-direction: column; padding: clamp(28px, 5vw, 68px) clamp(22px, 5vw, 66px); border-right: 1px solid var(--line); }
+      .relay-lead h2 { max-width: 360px; margin: 0; font-size: clamp(29px, 4.5vw, 52px); font-weight: 400; letter-spacing: -.06em; line-height: 1.02; }
+      .relay-lead p { max-width: 320px; margin: 20px 0 0; color: var(--muted); font-size: 13px; }
+      .relay-lead .relay-footnote { margin-top: auto; padding-top: 28px; color: var(--faint); font: 11px/1.6 "SFMono-Regular", Consolas, monospace; }
+      .relay-actions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); align-content: start; gap: 0; }
+      .relay-action { min-width: 0; padding: clamp(22px, 3.3vw, 42px); }
+      .relay-action + .relay-action { border-left: 1px solid var(--line); }
+      .relay-action-header { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 18px; }
+      .relay-action-number { color: var(--accent); font: 12px "SFMono-Regular", Consolas, monospace; }
+      .relay-action h3 { margin: 0; font-size: 17px; font-weight: 500; }
+      .relay-drop {
+        display: grid;
+        min-height: 160px;
+        place-items: center;
+        border: 1px dashed #4a4a4a;
+        color: var(--muted);
+        text-align: center;
+      }
+      .relay-drop:hover { border-color: var(--accent); color: #fff; }
+      .relay-drop strong { display: block; color: var(--accent); font-weight: 500; }
+      .relay-drop span { display: block; margin-top: 7px; font-size: 11px; }
+      .relay-action .queue { margin-top: 20px; }
+      .relay-action .queue-row { padding: 12px 0; }
+      .relay-action .queue-main { display: block; }
+      .relay-action .queue-meta { display: block; margin-top: 3px; }
+      .relay-action .queue-detail { align-items: baseline; }
+      .relay-link-box { display: grid; gap: 10px; }
+      .relay-link-box textarea { min-height: 160px; border-color: #414e5b; }
+      .relay-link-box .accent-button { justify-self: start; }
+      .relay-summary { grid-column: 1 / -1; display: grid; grid-template-columns: 1fr auto; gap: 16px; padding: 16px clamp(22px, 3.3vw, 42px); border-top: 1px solid var(--line); color: var(--muted); font-size: 12px; }
+      .relay-summary strong { color: #fff; font-weight: 500; }
+      .relay-summary a { color: var(--accent); }
+
+      @media (max-width: 1080px) {
+        .night-grid { grid-template-columns: 150px minmax(0, 1fr); }
+        .night-activity { display: none; }
+        .relay-lead { padding-right: 30px; padding-left: 30px; }
+      }
+
+      @media (max-width: 760px) {
+        .direction-switcher { align-items: start; flex-direction: column; gap: 7px; padding: 11px 16px; }
+        .direction-switcher h1 { margin: 0; }
+        .direction { min-height: calc(100vh - 91px); padding: 12px; }
+        .mock-frame { min-height: calc(100vh - 115px); }
+        .night-header { align-items: start; padding: 15px; }
+        .night-header .header-actions { display: none; }
+        .night-grid { display: block; min-height: 0; }
+        .night-nav { display: grid; grid-template-columns: repeat(3, 1fr); gap: 2px; padding: 8px; border-right: 0; border-bottom: 1px solid var(--line); }
+        .night-nav .nav-label, .sync-state { display: none; }
+        .night-nav a { padding: 8px; font-size: 12px; }
+        .night-nav a[aria-current="page"] { padding-left: 6px; }
+        .night-nav a span:last-child { display: none; }
+        .night-content { padding: 20px 15px; }
+        .night-intro { display: block; }
+        .storage-meter { margin-top: 18px; }
+        .night-flows { display: block; }
+        .night-flow, .night-flow + .night-flow { padding: 20px 0 0; border-left: 0; }
+        .night-flow + .night-flow { margin-top: 24px; border-top: 1px solid var(--line); }
+        .link-form { grid-template-columns: 1fr; }
+
+        .ledger-header { align-items: start; flex-direction: column; padding: 17px; }
+        .ledger-top-actions { width: 100%; justify-content: space-between; }
+        .ledger-title { display: block; padding: 20px 17px; }
+        .ledger-title p { margin-top: 11px; }
+        .ledger-stats { gap: 18px; }
+        .ledger-body { display: block; }
+        .ledger-panel { padding: 20px 17px 23px; }
+        .ledger-panel + .ledger-panel { border-top: 1px solid var(--line); border-left: 0; }
+        .ledger-upload-row { align-items: start; flex-wrap: wrap; }
+        .ledger-upload-row .selected-files { flex-basis: 100%; order: 3; }
+        .ledger-footer { align-items: start; flex-direction: column; padding: 13px 17px; gap: 4px; }
+
+        .relay-header { padding: 14px 15px; }
+        .relay-nav { display: none; }
+        .relay-layout { display: block; min-height: 0; }
+        .relay-lead { min-height: 300px; padding: 35px 22px; border-right: 0; border-bottom: 1px solid var(--line); }
+        .relay-lead .relay-footnote { margin-top: 28px; }
+        .relay-actions { display: block; }
+        .relay-action { padding: 24px 22px; }
+        .relay-action + .relay-action { border-top: 1px solid var(--line); border-left: 0; }
+        .relay-drop, .relay-link-box textarea { min-height: 130px; }
+        .relay-summary { display: block; padding: 14px 22px; }
+        .relay-summary a { display: block; margin-top: 5px; }
+      }
+    </style>
+  </head>
+  <body>
+    <header class="direction-switcher" aria-label="Design direction switcher">
+      <h1>1fichier client / directions</h1>
+      <div class="switcher-tabs" role="tablist" aria-label="Choose a visual direction">
+        <button class="switcher-tab" type="button" role="tab" aria-selected="true" aria-pressed="true" aria-controls="nightdesk" data-direction-target="nightdesk">01 / Nightdesk</button>
+        <button class="switcher-tab" type="button" role="tab" aria-selected="false" aria-pressed="false" aria-controls="ledger" data-direction-target="ledger">02 / Ledger</button>
+        <button class="switcher-tab" type="button" role="tab" aria-selected="false" aria-pressed="false" aria-controls="relay" data-direction-target="relay">03 / Relay</button>
+      </div>
+    </header>
+
+    <main>
+      <section class="direction nightdesk is-active" id="nightdesk" role="tabpanel" aria-label="Nightdesk direction">
+        <div class="mock-frame">
+          <header class="night-header">
+            <div class="brand-box" aria-hidden="true">1f</div>
+            <div>
+              <strong>onefichier / personal cloud</strong>
+              <span class="account">account@example.com · self-hosted client</span>
+            </div>
+            <div class="header-actions">
+              <span class="status status--working">connected</span>
+              <button type="button">Settings</button>
+              <button type="button" aria-label="More account options">···</button>
+            </div>
+          </header>
+
+          <div class="night-grid">
+            <nav class="night-nav" aria-label="Primary navigation">
+              <span class="nav-label">workspace</span>
+              <a href="#nightdesk" aria-current="page">Transfers <span class="nav-count">03</span></a>
+              <a href="#nightdesk">Files <span>↗</span></a>
+              <a href="#nightdesk">Activity <span>12</span></a>
+              <span class="sync-state">Sync is live</span>
+            </nav>
+
+            <div class="night-content">
+              <div class="night-intro">
+                <div>
+                  <h2>Transfer desk</h2>
+                  <p>Move local files up, or bring remote 1fichier links down. Queues stay visible until they finish.</p>
+                </div>
+                <div class="storage-meter">
+                  <strong>428 GB <span class="quiet">of 1 TB used</span></strong>
+                  <span>57% available</span>
+                  <div class="progress" aria-label="Storage used: 43 percent"><span style="width: 43%"></span></div>
+                </div>
+              </div>
+
+              <div class="night-flows">
+                <section class="night-flow" aria-labelledby="night-upload-title">
+                  <div class="section-title">
+                    <h3 id="night-upload-title">Upload local files</h3>
+                    <span class="status status--working">1 active</span>
+                  </div>
+                  <p class="flow-description">Choose files from this device and add them to the account queue.</p>
+                  <label class="file-action">
+                    <input class="sr-only" type="file" multiple data-file-input />
+                    <span aria-hidden="true">＋</span> Choose local files
+                  </label>
+                  <span class="sr-only" data-file-status aria-live="polite">No files selected</span>
+                  <ul class="queue" aria-label="Upload queue">
+                    <li class="queue-row">
+                      <div class="queue-main"><span class="queue-name">project-assets.zip</span><span class="queue-meta">1.4 GB</span></div>
+                      <div class="progress" style="color: var(--accent)" aria-label="Upload progress: 68 percent"><span style="width: 68%"></span></div>
+                      <div class="queue-detail"><span>Uploading · 68% · 09:12 remaining</span><span class="faint">↑ 22.4 MB/s</span></div>
+                    </li>
+                    <li class="queue-row">
+                      <div class="queue-main"><span class="queue-name">screenshots.tar</span><span class="queue-meta">284 MB</span></div>
+                      <div class="queue-detail"><span class="status status--waiting">Waiting for slot</span><span>queued 2 min ago</span></div>
+                    </li>
+                    <li class="queue-row">
+                      <div class="queue-main"><span class="queue-name">meeting-notes.txt</span><span class="queue-meta">12 KB</span></div>
+                      <div class="queue-detail"><span class="error-copy">Upload failed · network timeout</span><button class="table-action" type="button">Retry</button></div>
+                    </li>
+                  </ul>
+                </section>
+
+                <section class="night-flow" aria-labelledby="night-download-title">
+                  <div class="section-title">
+                    <h3 id="night-download-title">Download from links</h3>
+                    <span class="status status--ok">2 complete</span>
+                  </div>
+                  <p class="flow-description">Paste one or more 1fichier URLs. One link per line.</p>
+                  <form class="link-form" data-link-form>
+                    <textarea class="link-input" aria-label="1fichier download links" placeholder="https://1fichier.com/?example-one&#10;https://1fichier.com/?example-two"></textarea>
+                    <button class="accent-button" type="submit" data-link-submit>Queue links</button>
+                  </form>
+                  <ul class="queue" data-link-queue aria-label="Download queue">
+                    <li class="queue-row">
+                      <div class="queue-main"><span class="queue-name">backup-2026-08-24.zip</span><span class="queue-meta">8.1 GB</span></div>
+                      <div class="progress" style="color: var(--accent)" aria-label="Download progress: 32 percent"><span style="width: 32%"></span></div>
+                      <div class="queue-detail"><span>Downloading · 32%</span><span class="faint">↓ 16.8 MB/s</span></div>
+                    </li>
+                    <li class="queue-row">
+                      <div class="queue-main"><span class="queue-name">design-reference.pdf</span><span class="queue-meta">42 MB</span></div>
+                      <div class="queue-detail"><span class="status status--ok">Saved to Downloads</span><span>08:41</span></div>
+                    </li>
+                    <li class="queue-row">
+                      <div class="queue-main"><span class="queue-name">old-export.iso</span><span class="queue-meta">—</span></div>
+                      <div class="queue-detail"><span class="error-copy">Link expired · nothing downloaded</span><button class="table-action" type="button">Remove</button></div>
+                    </li>
+                  </ul>
+                </section>
+              </div>
+            </div>
+
+            <aside class="night-activity" aria-label="Recent activity">
+              <h3>Recent activity</h3>
+              <ol class="activity-list">
+                <li><strong>design-reference.pdf</strong>Download complete<span class="activity-time">Today · 08:41</span></li>
+                <li><strong>meeting-notes.txt</strong>Upload needs attention<span class="activity-time">Today · 08:38</span></li>
+                <li><strong>archive-2026-08-24.zip</strong>Added to download queue<span class="activity-time">Today · 08:36</span></li>
+              </ol>
+            </aside>
+          </div>
+        </div>
+      </section>
+
+      <section class="direction ledger" id="ledger" role="tabpanel" aria-label="Ledger direction" hidden>
+        <div class="mock-frame">
+          <header class="ledger-header">
+            <div class="ledger-brand">
+              <span class="ledger-brand-mark" aria-hidden="true">1f//</span>
+              <div><strong>transfer ledger</strong><span>account@example.com</span></div>
+            </div>
+            <div class="ledger-top-actions">
+              <span class="status status--working">3 transfers in progress</span>
+              <button type="button">Account</button>
+            </div>
+          </header>
+
+          <div class="ledger-title">
+            <div>
+              <h2>Transfers</h2>
+              <div class="ledger-stats">
+                <div class="ledger-stat"><strong>03</strong><span>active</span></div>
+                <div class="ledger-stat"><strong>12</strong><span>completed today</span></div>
+                <div class="ledger-stat"><strong>9.4 GB</strong><span>in motion</span></div>
+              </div>
+            </div>
+            <p>Every upload and download in one plain register. Queue new work, then leave the browser open.</p>
+          </div>
+
+          <div class="ledger-body">
+            <section class="ledger-panel" aria-labelledby="ledger-upload-title">
+              <div class="section-title">
+                <h3 id="ledger-upload-title">01 / Upload local files</h3>
+                <span class="status status--working">sending</span>
+              </div>
+              <p>Select files from your computer. They will appear in the register before transfer begins.</p>
+              <div class="ledger-upload-row">
+                <label class="ledger-file-label">
+                  <input class="sr-only" type="file" multiple data-file-input />
+                  Choose files
+                </label>
+                <button type="button">Queue upload</button>
+                <span class="selected-files" data-file-status aria-live="polite">No files selected</span>
+              </div>
+              <div class="ledger-table-wrap">
+                <table class="ledger-table">
+                  <thead><tr><th scope="col">Name</th><th scope="col">Size</th><th scope="col">Progress</th><th scope="col">State</th></tr></thead>
+                  <tbody>
+                    <tr>
+                      <td class="file-cell">product-video-final.mp4<small>uploaded from MacBook Pro</small></td>
+                      <td class="mono quiet">2.8 GB</td>
+                      <td><span class="mono">84%</span><div class="progress" aria-label="Upload progress: 84 percent"><span style="width: 84%"></span></div></td>
+                      <td><span class="status status--working">active</span></td>
+                    </tr>
+                    <tr>
+                      <td class="file-cell">fonts-and-icons.zip<small>added 4 min ago</small></td>
+                      <td class="mono quiet">486 MB</td>
+                      <td class="mono quiet">—</td>
+                      <td><span class="status status--waiting">queued</span></td>
+                    </tr>
+                    <tr>
+                      <td class="file-cell error">client-hand-off.pdf<small>server rejected request</small></td>
+                      <td class="mono quiet">12 MB</td>
+                      <td class="mono error">—</td>
+                      <td><span class="status status--error">failed</span></td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            </section>
+
+            <section class="ledger-panel" aria-labelledby="ledger-download-title">
+              <div class="section-title">
+                <h3 id="ledger-download-title">02 / Download from links</h3>
+                <span class="status status--ok">ready</span>
+              </div>
+              <p>Paste one or many 1fichier URLs. Keep each link on its own line.</p>
+              <form class="ledger-link-form" data-link-form>
+                <textarea class="link-input" aria-label="1fichier download links" placeholder="https://1fichier.com/?your-link&#10;https://1fichier.com/?another-link"></textarea>
+                <button class="accent-button" type="submit" data-link-submit>Add to download queue</button>
+              </form>
+              <div class="ledger-link-note">Downloads save to <span class="mono">~/Downloads/1fichier</span></div>
+              <ul class="ledger-download-list" data-link-queue aria-label="Download queue">
+                <li><div><strong>client-build-0.8.3.dmg</strong><small>1.2 GB · 1fichier.com</small></div><span class="status status--working">46%</span></li>
+                <li><div><strong>brand-assets-2026.zip</strong><small>742 MB · 1fichier.com</small></div><span class="status status--ok">saved</span></li>
+                <li><div><strong class="error">missing-archive.tar</strong><small class="error-copy">Link expired · check the URL and try again</small></div><button class="table-action" type="button">Remove</button></li>
+              </ul>
+            </section>
+          </div>
+
+          <footer class="ledger-footer"><span><strong>Last sync</strong> 2 min ago</span><span><strong>Storage</strong> 428 GB / 1 TB</span><span><strong>Endpoint</strong> api.1fichier.com</span></footer>
+        </div>
+      </section>
+
+      <section class="direction relay" id="relay" role="tabpanel" aria-label="Relay direction" hidden>
+        <div class="mock-frame">
+          <header class="relay-header">
+            <div class="relay-logo"><span class="relay-logo-mark">1f</span><span>relay</span></div>
+            <nav class="relay-nav" aria-label="Relay navigation"><a href="#relay">Transfers</a><a href="#relay">Files</a><a href="#relay">Settings</a></nav>
+            <div class="relay-user"><i aria-hidden="true"></i> account@example.com</div>
+          </header>
+
+          <div class="relay-layout">
+            <section class="relay-lead">
+              <p class="eyebrow">personal 1fichier client</p>
+              <h2>Move files<br />through one relay.</h2>
+              <p>Upload from this device or paste a remote link. You can see what is moving, what is waiting, and what needs a retry.</p>
+              <p class="relay-footnote">Connected to your account<br />Docker host · local network</p>
+            </section>
+
+            <div class="relay-actions">
+              <section class="relay-action" aria-labelledby="relay-upload-title">
+                <div class="relay-action-header"><span class="relay-action-number">01</span><h3 id="relay-upload-title">Upload local files</h3><span class="status status--working">1 active</span></div>
+                <label class="relay-drop">
+                  <input class="sr-only" type="file" multiple data-file-input />
+                  <span><strong>Choose files from this device</strong><span>or drop them here · multiple files supported</span></span>
+                </label>
+                <span class="sr-only" data-file-status aria-live="polite">No files selected</span>
+                <ul class="queue" aria-label="Upload queue">
+                  <li class="queue-row"><div class="queue-main"><span class="queue-name">photo-library-aug.zip</span><span class="queue-meta">4.6 GB · 71%</span></div><div class="progress" aria-label="Upload progress: 71 percent"><span style="width: 71%"></span></div><div class="queue-detail"><span>Uploading now</span><span>11 min left</span></div></li>
+                  <li class="queue-row"><div class="queue-main"><span class="queue-name">invoice-2026-08.pdf</span><span class="queue-meta">4 MB</span></div><div class="queue-detail"><span class="status status--waiting">Queued next</span><span>waiting</span></div></li>
+                  <li class="queue-row"><div class="queue-main"><span class="queue-name">tax-receipt.png</span><span class="queue-meta">1.8 MB</span></div><div class="queue-detail"><span class="error-copy">Failed · permission denied</span><button class="table-action" type="button">Retry</button></div></li>
+                </ul>
+              </section>
+
+              <section class="relay-action" aria-labelledby="relay-download-title">
+                <div class="relay-action-header"><span class="relay-action-number">02</span><h3 id="relay-download-title">Download from links</h3><span class="status status--ok">2 saved</span></div>
+                <form class="relay-link-box" data-link-form>
+                  <textarea class="link-input" aria-label="1fichier download links" placeholder="Paste 1fichier links here&#10;One URL per line"></textarea>
+                  <button class="accent-button" type="submit" data-link-submit>Fetch links</button>
+                </form>
+                <ul class="queue" data-link-queue aria-label="Download queue">
+                  <li class="queue-row"><div class="queue-main"><span class="queue-name">reference-pack.zip</span><span class="queue-meta">936 MB · 24%</span></div><div class="progress" aria-label="Download progress: 24 percent"><span style="width: 24%"></span></div><div class="queue-detail"><span>Downloading</span><span>↓ 8.2 MB/s</span></div></li>
+                  <li class="queue-row"><div class="queue-main"><span class="queue-name">type-specimen.pdf</span><span class="queue-meta">18 MB</span></div><div class="queue-detail"><span class="status status--ok">Saved locally</span><span>10:22</span></div></li>
+                  <li class="queue-row"><div class="queue-main"><span class="queue-name">expired-link.zip</span><span class="queue-meta">—</span></div><div class="queue-detail"><span class="error-copy">Expired link</span><button class="table-action" type="button">Remove</button></div></li>
+                </ul>
+              </section>
+
+              <div class="relay-summary"><span><strong>3 active jobs</strong> · 1 requires attention</span><a href="#relay">View transfer history →</a></div>
+            </div>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <script>
+      (() => {
+        const tabs = [...document.querySelectorAll('[data-direction-target]')];
+        const directions = [...document.querySelectorAll('.direction')];
+
+        function setDirection(targetId) {
+          tabs.forEach((tab) => {
+            const active = tab.dataset.directionTarget === targetId;
+            tab.setAttribute('aria-pressed', String(active));
+            tab.setAttribute('aria-selected', String(active));
+          });
+          directions.forEach((direction) => {
+            const active = direction.id === targetId;
+            direction.classList.toggle('is-active', active);
+            direction.hidden = !active;
+          });
+        }
+
+        tabs.forEach((tab) => tab.addEventListener('click', () => setDirection(tab.dataset.directionTarget)));
+
+        document.querySelectorAll('[data-file-input]').forEach((input) => {
+          input.addEventListener('change', () => {
+            const files = [...input.files];
+            const status = input.closest('label, .ledger-upload-row')?.parentElement?.querySelector('[data-file-status]')
+              ?? input.closest('label, .ledger-upload-row')?.querySelector('[data-file-status]');
+            if (status) status.textContent = files.length ? `${files.length} file${files.length === 1 ? '' : 's'} selected` : 'No files selected';
+            const nearbyStatus = input.closest('label')?.nextElementSibling;
+            if (nearbyStatus?.matches('[data-file-status]')) nearbyStatus.textContent = files.length ? `${files.length} file${files.length === 1 ? '' : 's'} selected` : 'No files selected';
+          });
+        });
+
+        document.querySelectorAll('[data-link-form]').forEach((form) => {
+          form.addEventListener('submit', (event) => {
+            event.preventDefault();
+            const input = form.querySelector('.link-input');
+            const queue = form.parentElement.querySelector('[data-link-queue]');
+            const links = input.value.split(/\n+/).map((link) => link.trim()).filter(Boolean);
+            if (!links.length || !queue) return;
+            links.forEach((link) => {
+              const item = document.createElement('li');
+              item.className = queue.classList.contains('ledger-download-list') ? '' : 'queue-row';
+              if (queue.classList.contains('ledger-download-list')) {
+                item.innerHTML = `<div><strong>${link.replace(/^https?:\/\//, '')}</strong><small>queued just now · 1fichier.com</small></div><span class="status status--waiting">queued</span>`;
+              } else {
+                item.innerHTML = `<div class="queue-main"><span class="queue-name">${link.replace(/^https?:\/\//, '')}</span><span class="queue-meta">pending</span></div><div class="queue-detail"><span class="status status--waiting">Queued for download</span><span>just now</span></div>`;
+              }
+              queue.prepend(item);
+            });
+            input.value = '';
+          });
+        });
+      })();
+    </script>
+  </body>
+</html>
