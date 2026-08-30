@@ -12,10 +12,10 @@ import {
   setSessionCookie,
 } from "./auth.js";
 import {
-  normalizeOneFichierLinks,
-  OneFichierClient,
-  OneFichierError,
-} from "./onefichier.js";
+  normalizeFichierLinks,
+  FichierClient,
+  FichierError,
+} from "./1fichier.js";
 import { handleUpload, sendUploadError } from "./upload.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -55,7 +55,7 @@ function requireAuth(request: Request, response: Response, config: AppConfig): b
 }
 
 function publicError(error: unknown): string {
-  if (error instanceof OneFichierError) {
+  if (error instanceof FichierError) {
     const detail = error.upstreamMessage?.replace(/https?:\/\/\S+/gi, "[redacted]");
     return detail ? `${error.message}: ${detail}` : error.message;
   }
@@ -72,7 +72,7 @@ function clientIp(request: Request): string {
   return request.ip || "unknown";
 }
 
-export function createApp(config: AppConfig, client = new OneFichierClient(config.apiKey)): express.Express {
+export function createApp(config: AppConfig, client = new FichierClient(config.apiKey)): express.Express {
   const app = express();
   const throttle = new LoginThrottleStore();
   app.set("trust proxy", 1);
@@ -155,7 +155,7 @@ export function createApp(config: AppConfig, client = new OneFichierClient(confi
       response.status(400).json({ error: "The optional password is invalid" });
       return;
     }
-    const normalized = normalizeOneFichierLinks(body.links);
+    const normalized = normalizeFichierLinks(body.links);
     if (normalized.invalid.length > 0) {
       response.status(400).json({ error: "Only canonical https://1fichier.com/? links are accepted", invalid: normalized.invalid });
       return;

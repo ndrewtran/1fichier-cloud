@@ -29,13 +29,13 @@ export interface UploadResponse {
 
 export type Fetcher = (input: string | URL, init?: RequestInit) => Promise<Response>;
 
-export class OneFichierError extends Error {
+export class FichierError extends Error {
   public readonly statusCode: number | undefined;
   public readonly upstreamMessage: string | undefined;
 
   public constructor(message: string, statusCode?: number, upstreamMessage?: string) {
     super(message);
-    this.name = "OneFichierError";
+    this.name = "FichierError";
     this.statusCode = statusCode;
     this.upstreamMessage = upstreamMessage;
   }
@@ -88,7 +88,7 @@ async function parseJsonBody(response: Response): Promise<unknown> {
   try {
     return JSON.parse(text) as unknown;
   } catch {
-    throw new OneFichierError("1fichier returned an invalid response", response.status);
+    throw new FichierError("1fichier returned an invalid response", response.status);
   }
 }
 
@@ -96,7 +96,7 @@ function authHeaders(apiKey: string): HeadersInit {
   return { Authorization: `Bearer ${apiKey}`, Accept: "application/json" };
 }
 
-function isAllowedOneFichierHostname(hostname: string): boolean {
+function isAllowedFichierHostname(hostname: string): boolean {
   const normalized = hostname.toLowerCase();
   return normalized === "1fichier.com" || normalized.endsWith(".1fichier.com");
 }
@@ -114,7 +114,7 @@ function normalizeUploadServerUrl(value: string): string | null {
     try {
       if (hasExplicitPortOrCredentials(raw)) return null;
       const parsed = new URL(raw);
-      if (parsed.protocol !== "https:" || parsed.username || parsed.password || parsed.port || parsed.pathname !== "/" || parsed.search || parsed.hash || !isAllowedOneFichierHostname(parsed.hostname)) return null;
+      if (parsed.protocol !== "https:" || parsed.username || parsed.password || parsed.port || parsed.pathname !== "/" || parsed.search || parsed.hash || !isAllowedFichierHostname(parsed.hostname)) return null;
       return `https://${parsed.hostname}`;
     } catch {
       return null;
@@ -123,14 +123,14 @@ function normalizeUploadServerUrl(value: string): string | null {
 
   if (!/^[a-z0-9_](?:[a-z0-9_-]{0,61}[a-z0-9_])?(?:\.[a-z0-9_](?:[a-z0-9_-]{0,61}[a-z0-9_])?)+$/i.test(raw)) return null;
   const hostname = raw.toLowerCase();
-  return isAllowedOneFichierHostname(hostname) ? `https://${hostname}` : null;
+  return isAllowedFichierHostname(hostname) ? `https://${hostname}` : null;
 }
 
 function normalizeDownloadTokenUrl(value: string): string | null {
   try {
     if (!/^https:\/\//i.test(value.trim()) || hasExplicitPortOrCredentials(value.trim())) return null;
     const parsed = new URL(value);
-    if (parsed.protocol !== "https:" || parsed.username || parsed.password || parsed.port || parsed.hash || !isAllowedOneFichierHostname(parsed.hostname)) return null;
+    if (parsed.protocol !== "https:" || parsed.username || parsed.password || parsed.port || parsed.hash || !isAllowedFichierHostname(parsed.hostname)) return null;
     return parsed.toString();
   } catch {
     return null;
@@ -142,11 +142,11 @@ function canonicalLink(value: string): string | null {
   return match?.[1] ? `https://1fichier.com/?${match[1]}` : null;
 }
 
-export function normalizeOneFichierLink(value: string): string | null {
+export function normalizeFichierLink(value: string): string | null {
   return canonicalLink(value);
 }
 
-export function normalizeOneFichierLinks(values: string[]): { links: string[]; invalid: string[] } {
+export function normalizeFichierLinks(values: string[]): { links: string[]; invalid: string[] } {
   const links: string[] = [];
   const invalid: string[] = [];
   for (const value of values) {
@@ -157,7 +157,7 @@ export function normalizeOneFichierLinks(values: string[]): { links: string[]; i
   return { links, invalid };
 }
 
-export class OneFichierClient {
+export class FichierClient {
   private readonly apiKey: string;
   private readonly limiter: ApiRateLimiter;
   private readonly fetcher: Fetcher;
@@ -188,14 +188,14 @@ export class OneFichierClient {
       }
       const body = await parseJsonBody(response);
       if (!response.ok) {
-        throw new OneFichierError("Could not get an upload server", response.status, responseMessage(body));
+        throw new FichierError("Could not get an upload server", response.status, responseMessage(body));
       }
-      if (!isRecord(body)) throw new OneFichierError("1fichier returned an invalid upload server", response.status);
+      if (!isRecord(body)) throw new FichierError("1fichier returned an invalid upload server", response.status);
       const url = stringField(body, "url");
       const id = stringField(body, "id");
-      if (!url || !id) throw new OneFichierError("1fichier returned an incomplete upload server", response.status);
+      if (!url || !id) throw new FichierError("1fichier returned an incomplete upload server", response.status);
       const normalizedUrl = normalizeUploadServerUrl(url);
-      if (!normalizedUrl) throw new OneFichierError("1fichier returned an unsafe upload server", response.status);
+      if (!normalizedUrl) throw new FichierError("1fichier returned an unsafe upload server", response.status);
       return { url: normalizedUrl, id };
     });
   }
@@ -203,8 +203,8 @@ export class OneFichierClient {
   public getUploadStatus(statusUrl: string, id: string): Promise<unknown> {
     return this.limiter.enqueue(async () => {
       const url = new URL(statusUrl);
-      if (url.protocol !== "https:" || url.username || url.password || url.port || !isAllowedOneFichierHostname(url.hostname)) {
-        throw new OneFichierError("1fichier returned an unsafe upload status URL");
+      if (url.protocol !== "https:" || url.username || url.password || url.port || !isAllowedFichierHostname(url.hostname)) {
+        throw new FichierError("1fichier returned an unsafe upload status URL");
       }
       url.searchParams.set("xid", id);
       const response = await this.fetcher(url, {
@@ -215,7 +215,7 @@ export class OneFichierClient {
       });
       const body = await parseJsonBody(response);
       if (!response.ok) {
-        throw new OneFichierError("1fichier could not finish the upload", response.status, responseMessage(body));
+        throw new FichierError("1fichier could not finish the upload", response.status, responseMessage(body));
       }
       return body;
     });
@@ -241,7 +241,7 @@ export class OneFichierClient {
       const body = await parseJsonBody(response);
       if (!response.ok) {
         const message = responseMessage(body);
-        throw new OneFichierError(
+        throw new FichierError(
           response.status === 401 || response.status === 403
             ? "Download tokens require a Premium, Premium GOLD, Access, or CDN plan"
             : "Could not create a download token",
@@ -249,18 +249,18 @@ export class OneFichierClient {
           message,
         );
       }
-      if (!isRecord(body)) throw new OneFichierError("1fichier returned an invalid download token", response.status);
+      if (!isRecord(body)) throw new FichierError("1fichier returned an invalid download token", response.status);
       const rawUrl = stringField(body, "url");
       if (!rawUrl) {
         const detail = responseMessage(body);
-        throw new OneFichierError(
+        throw new FichierError(
           "Could not create a download token. This capability requires a Premium, Premium GOLD, Access, or CDN plan",
           response.status,
           detail,
         );
       }
       const url = normalizeDownloadTokenUrl(rawUrl);
-      if (!url) throw new OneFichierError("1fichier returned an unsafe download token", response.status);
+      if (!url) throw new FichierError("1fichier returned an unsafe download token", response.status);
       const token: DownloadToken = { url };
       const status = stringField(body, "status");
       const message = stringField(body, "message");
@@ -277,11 +277,11 @@ export class OneFichierClient {
     fileStream: Readable,
   ): Promise<UploadResponse> {
     const normalizedServerUrl = normalizeUploadServerUrl(uploadServer.url);
-    if (!normalizedServerUrl) throw new OneFichierError("1fichier returned an unsafe upload server");
+    if (!normalizedServerUrl) throw new FichierError("1fichier returned an unsafe upload server");
     const target = new URL(normalizedServerUrl);
     target.pathname = "/upload.cgi";
     target.search = `?id=${encodeURIComponent(uploadServer.id)}`;
-    const boundary = `----onefichier-${randomBytes(12).toString("hex")}`;
+    const boundary = `----1fichier-${randomBytes(12).toString("hex")}`;
     const preamble = Buffer.from(
       `--${boundary}\r\nContent-Disposition: form-data; name="file[]"; filename="${safeFilename(filename)}"\r\nContent-Type: application/octet-stream\r\n\r\n`,
       "utf8",
@@ -346,16 +346,16 @@ function safeFilename(filename: string): string {
 
 export function uploadStatusUrl(response: UploadResponse, uploadServer: UploadServer): string {
   const normalizedServerUrl = normalizeUploadServerUrl(uploadServer.url);
-  if (!normalizedServerUrl) throw new OneFichierError("1fichier returned an unsafe upload server");
+  if (!normalizedServerUrl) throw new FichierError("1fichier returned an unsafe upload server");
   const base = new URL(normalizedServerUrl);
   let status: URL;
   try {
     status = response.location ? new URL(response.location, normalizedServerUrl) : new URL("/end.pl", normalizedServerUrl);
   } catch {
-    throw new OneFichierError("1fichier returned an invalid upload status URL");
+    throw new FichierError("1fichier returned an invalid upload status URL");
   }
   if (status.protocol !== "https:" || status.hostname !== base.hostname || status.username || status.password || status.port || status.hash) {
-    throw new OneFichierError("1fichier returned an unsafe upload status URL");
+    throw new FichierError("1fichier returned an unsafe upload status URL");
   }
   return status.toString();
 }

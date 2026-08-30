@@ -1,5 +1,5 @@
 {
-  "name": "onefichier-nightdesk",
+  "name": "1fichier-nightdesk",
   "version": "1.0.0",
   "private": true,
   "description": "A self-hosted, single-user web client for the official 1fichier API.",
@@ -9,7 +9,7 @@
     "node": ">=22"
   },
   "scripts": {
-    "build": "tsc -p tsconfig.build.json && node scripts/build.mjs",
+    "build": "node scripts/clean.mjs && tsc -p tsconfig.build.json && node scripts/build.mjs",
     "dev": "tsx watch src/server.ts",
     "start": "node dist/server.js",
     "lint": "tsc --noEmit",

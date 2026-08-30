@@ -39,7 +39,7 @@ export function loadConfig(): AppConfig {
   return {
     appPassword: required("APP_PASSWORD"),
     sessionSecret: required("SESSION_SECRET"),
-    apiKey: required("ONEFICHIER_API_KEY"),
+    apiKey: required("1FICHIER_API_KEY"),
     host: process.env.HOST ?? "0.0.0.0",
     port: positiveInteger("PORT", 3000),
     nodeEnv,

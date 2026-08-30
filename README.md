@@ -8,7 +8,7 @@ Node.js 22 or newer is required.
 
 ```sh
 cp .env.example .env
-# Set APP_PASSWORD, SESSION_SECRET, and ONEFICHIER_API_KEY in .env
+# Set APP_PASSWORD, SESSION_SECRET, and 1FICHIER_API_KEY in .env
 npm ci
 npm run dev
 ```

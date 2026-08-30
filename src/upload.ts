@@ -1,7 +1,7 @@
 import type { Request, Response } from "express";
 import Busboy from "busboy";
 import type { Readable } from "node:stream";
-import { OneFichierClient, OneFichierError, parseUploadLinks, uploadStatusUrl } from "./onefichier.js";
+import { FichierClient, FichierError, parseUploadLinks, uploadStatusUrl } from "./1fichier.js";
 
 const MAX_MULTIPART_OVERHEAD = 1024 * 1024;
 
@@ -22,7 +22,7 @@ function parseSafeSize(value: string | undefined): number | null {
 }
 
 function errorMessage(error: unknown): string {
-  if (error instanceof OneFichierError) {
+  if (error instanceof FichierError) {
     return error.upstreamMessage ? `${error.message}: ${error.upstreamMessage}` : error.message;
   }
   return error instanceof Error ? error.message : "Upload failed";
@@ -32,15 +32,15 @@ async function processFile(
   file: Readable,
   filename: string,
   size: number,
-  client: OneFichierClient,
+  client: FichierClient,
 ): Promise<UploadResult> {
   const server = await client.getUploadServer();
   const uploadResponse = await client.uploadMultipart(server, filename, size, file);
   if (uploadResponse.statusCode === 500) {
-    throw new OneFichierError("1fichier rejected the upload", 500, uploadResponse.body.slice(0, 400));
+    throw new FichierError("1fichier rejected the upload", 500, uploadResponse.body.slice(0, 400));
   }
   if (uploadResponse.statusCode !== 200 && uploadResponse.statusCode !== 302) {
-    throw new OneFichierError("1fichier returned an unexpected upload response", uploadResponse.statusCode);
+    throw new FichierError("1fichier returned an unexpected upload response", uploadResponse.statusCode);
   }
 
   let immediateBody: unknown = null;
@@ -53,14 +53,14 @@ async function processFile(
   }
   const status = await client.getUploadStatus(uploadStatusUrl(uploadResponse, server), server.id);
   const links = [...new Set([...parseUploadLinks(immediateBody), ...parseUploadLinks(status)])];
-  if (links.length === 0) throw new OneFichierError("Upload finished without a download link");
+  if (links.length === 0) throw new FichierError("Upload finished without a download link");
   return { filename, size, links };
 }
 
 export async function handleUpload(
   request: Request,
   response: Response,
-  client: OneFichierClient,
+  client: FichierClient,
   maxUploadBytes: number,
 ): Promise<void> {
   const contentLength = parseSafeSize(headerValue(request.headers["content-length"]));
@@ -141,6 +141,6 @@ export async function handleUpload(
 }
 
 export function sendUploadError(response: Response, error: unknown): void {
-  const status = error instanceof OneFichierError && error.statusCode === 500 ? 502 : 502;
+  const status = error instanceof FichierError && error.statusCode === 500 ? 502 : 502;
   response.status(status).json({ error: errorMessage(error) });
 }

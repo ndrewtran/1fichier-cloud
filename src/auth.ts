@@ -1,7 +1,7 @@
 import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 import type { Request, Response } from "express";
 
-const SESSION_COOKIE = "onefichier_session";
+const SESSION_COOKIE = "1fichier_session";
 const SESSION_TTL_MS = 8 * 60 * 60 * 1000;
 
 interface SessionPayload {

@@ -4,7 +4,7 @@ import test, { after, before } from "node:test";
 import { Readable } from "node:stream";
 import { createSession, LoginThrottleStore, verifySession } from "../src/auth.js";
 import { type AppConfig } from "../src/config.js";
-import { normalizeOneFichierLink, OneFichierClient, type DownloadToken, type UploadServer, type UploadResponse } from "../src/onefichier.js";
+import { normalizeFichierLink, FichierClient, type DownloadToken, type UploadServer, type UploadResponse } from "../src/1fichier.js";
 import { ApiRateLimiter } from "../src/rate-limit.js";
 import { configureServerTimeouts, createApp, UPLOAD_REQUEST_TIMEOUT_MS } from "../src/server.js";
 
@@ -26,16 +26,16 @@ test("login throttling blocks repeated failures and clears on success", () => {
 });
 
 test("canonical link validation rejects arbitrary hosts and query strings", () => {
-  assert.equal(normalizeOneFichierLink("https://1fichier.com/?abcde"), "https://1fichier.com/?abcde");
-  assert.equal(normalizeOneFichierLink("https://www.1fichier.com/?abcde"), "https://1fichier.com/?abcde");
-  assert.equal(normalizeOneFichierLink("https://1fichier.com/?ABCde"), null);
-  assert.equal(normalizeOneFichierLink("https://evil.example/?abcde"), null);
-  assert.equal(normalizeOneFichierLink("https://1fichier.com/?abcde&redirect=https://evil.example"), null);
+  assert.equal(normalizeFichierLink("https://1fichier.com/?abcde"), "https://1fichier.com/?abcde");
+  assert.equal(normalizeFichierLink("https://www.1fichier.com/?abcde"), "https://1fichier.com/?abcde");
+  assert.equal(normalizeFichierLink("https://1fichier.com/?ABCde"), null);
+  assert.equal(normalizeFichierLink("https://evil.example/?abcde"), null);
+  assert.equal(normalizeFichierLink("https://1fichier.com/?abcde&redirect=https://evil.example"), null);
 });
 
 test("API client retries upload server with POST only after method rejection", async () => {
   const methods: string[] = [];
-  const client = new OneFichierClient("api-key", async (_input, init) => {
+  const client = new FichierClient("api-key", async (_input, init) => {
     methods.push(init?.method ?? "GET");
     if (methods.length === 1) return new Response("method", { status: 405 });
     return new Response(JSON.stringify({ url: "https://upload.1fichier.com/", id: "upload-id" }), { status: 200, headers: { "Content-Type": "application/json" } });
@@ -45,12 +45,12 @@ test("API client retries upload server with POST only after method rejection", a
 });
 
 test("API client normalizes the official host-only upload server response", async () => {
-  const client = new OneFichierClient("api-key", async () => new Response(JSON.stringify({ url: "invalid_node.1fichier.com", id: "upload-id" }), { status: 200 }));
+  const client = new FichierClient("api-key", async () => new Response(JSON.stringify({ url: "invalid_node.1fichier.com", id: "upload-id" }), { status: 200 }));
   assert.deepEqual(await client.getUploadServer(), { url: "https://invalid_node.1fichier.com", id: "upload-id" });
 });
 
 test("upload status links extract documented link objects", async () => {
-  const { parseUploadLinks } = await import("../src/onefichier.js");
+  const { parseUploadLinks } = await import("../src/1fichier.js");
   assert.deepEqual(parseUploadLinks({ links: [
     { download: "https://1fichier.com/?abcde", filename: "notes.txt", size: 12 },
     { download: "javascript:alert(1)", filename: "bad.txt" },
@@ -59,7 +59,7 @@ test("upload status links extract documented link objects", async () => {
 });
 
 test("upload status fetch disables redirects", async () => {
-  const client = new OneFichierClient("api-key", async (_input, init) => {
+  const client = new FichierClient("api-key", async (_input, init) => {
     assert.equal(init?.redirect, "error");
     return new Response(JSON.stringify({ links: [] }), { status: 200 });
   });
@@ -76,13 +76,13 @@ test("upstream response parsing stops at the bounded response cap", async () => 
       cancelled = true;
     },
   });
-  const client = new OneFichierClient("api-key", async () => new Response(body, { status: 200 }));
+  const client = new FichierClient("api-key", async () => new Response(body, { status: 200 }));
   await assert.rejects(client.getUploadServer(), /invalid response/);
   assert.equal(cancelled, true);
 });
 
 test("download token responses reject non-1fichier URLs", async () => {
-  const client = new OneFichierClient("api-key", async () => new Response(JSON.stringify({ url: "https://evil.example/token", status: "OK" }), { status: 200 }));
+  const client = new FichierClient("api-key", async () => new Response(JSON.stringify({ url: "https://evil.example/token", status: "OK" }), { status: 200 }));
   await assert.rejects(client.getDownloadToken("https://1fichier.com/?abcde"), /unsafe download token/);
 });
 
@@ -94,7 +94,7 @@ test("upload request timeout is extended without changing header timeout", () =>
   assert.equal(timeoutServer.headersTimeout, defaultHeadersTimeout);
 });
 
-class MockClient extends OneFichierClient {
+class MockClient extends FichierClient {
   public readonly requestedLinks: string[] = [];
 
   public constructor() {
