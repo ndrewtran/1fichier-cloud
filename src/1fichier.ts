@@ -8,7 +8,16 @@ import { ApiRateLimiter } from "./rate-limit.js";
 const API_ORIGIN = "https://api.1fichier.com";
 const TOKEN_PATH = "/v1/download/get_token.cgi";
 const UPLOAD_SERVER_PATH = "/v1/upload/get_upload_server.cgi";
+const USER_INFO_PATH = "/v1/user/info.cgi";
 const MAX_API_RESPONSE_BYTES = 256 * 1024;
+export const API_STATUS_CACHE_TTL_MS = 6 * 60 * 1000;
+
+export type FichierApiStatus = "connected" | "not_configured" | "invalid_key" | "unavailable";
+
+const PLACEHOLDER_API_KEYS = new Set([
+  "SET_ME_IN_EASYPANEL",
+  "replace-with-your-1fichier-api-key",
+]);
 
 export interface UploadServer {
   url: string;
@@ -161,11 +170,59 @@ export class FichierClient {
   private readonly apiKey: string;
   private readonly limiter: ApiRateLimiter;
   private readonly fetcher: Fetcher;
+  private statusCache: { status: FichierApiStatus; expiresAt: number } | undefined;
+  private statusRequest: Promise<FichierApiStatus> | undefined;
 
   public constructor(apiKey: string, fetcher: Fetcher = globalThis.fetch.bind(globalThis), limiter = new ApiRateLimiter(3)) {
     this.apiKey = apiKey;
     this.fetcher = fetcher;
     this.limiter = limiter;
+  }
+
+  /** Validate the configured key without exposing account details to callers. */
+  public getApiStatus(): Promise<FichierApiStatus> {
+    if (PLACEHOLDER_API_KEYS.has(this.apiKey)) return Promise.resolve("not_configured");
+
+    const now = Date.now();
+    if (this.statusCache && this.statusCache.expiresAt > now) return Promise.resolve(this.statusCache.status);
+    if (this.statusRequest) return this.statusRequest;
+
+    const request = this.fetchApiStatus()
+      .catch((): FichierApiStatus => "unavailable")
+      .then((status) => {
+        this.statusCache = { status, expiresAt: Date.now() + API_STATUS_CACHE_TTL_MS };
+        this.statusRequest = undefined;
+        return status;
+      });
+    this.statusRequest = request;
+    return request;
+  }
+
+  private async fetchApiStatus(): Promise<FichierApiStatus> {
+    try {
+      const response = await this.limiter.enqueue(() => this.fetcher(`${API_ORIGIN}${USER_INFO_PATH}`, {
+        method: "POST",
+        headers: { ...authHeaders(this.apiKey), "Content-Type": "application/json" },
+        body: "{}",
+        redirect: "error",
+        signal: AbortSignal.timeout(10_000),
+      }));
+      if (response.status === 401) {
+        await response.body?.cancel();
+        return "invalid_key";
+      }
+      // A 403 can also indicate an upstream flood or temporary IP lock.
+      if (!response.ok) {
+        await response.body?.cancel();
+        return "unavailable";
+      }
+      const body = await parseJsonBody(response);
+      if (!isRecord(body)) return "unavailable";
+      const email = body.email;
+      return typeof email === "string" && email.trim().length > 0 ? "connected" : "unavailable";
+    } catch {
+      return "unavailable";
+    }
   }
 
   public getUploadServer(): Promise<UploadServer> {

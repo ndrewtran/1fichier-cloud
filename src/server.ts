@@ -119,6 +119,15 @@ export function createApp(config: AppConfig, client = new FichierClient(config.a
     response.json({ authenticated: isAuthenticated(request, config), maxUploadBytes: config.maxUploadBytes });
   });
 
+  app.get("/api/1fichier/status", async (request, response) => {
+    if (!requireAuth(request, response, config)) return;
+    try {
+      response.json({ status: await client.getApiStatus() });
+    } catch {
+      response.json({ status: "unavailable" });
+    }
+  });
+
   app.post("/api/logout", (request, response) => {
     if (!sameOrigin(request, config)) {
       response.status(403).json({ error: "Cross-origin request rejected" });

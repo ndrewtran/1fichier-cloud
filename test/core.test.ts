@@ -1,10 +1,11 @@
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
 import { createServer, request as httpRequest, type Server } from "node:http";
 import test, { after, before } from "node:test";
 import { Readable } from "node:stream";
 import { createSession, LoginThrottleStore, verifySession } from "../src/auth.js";
 import { type AppConfig } from "../src/config.js";
-import { normalizeFichierLink, FichierClient, type DownloadToken, type UploadServer, type UploadResponse } from "../src/1fichier.js";
+import { API_STATUS_CACHE_TTL_MS, normalizeFichierLink, FichierClient, type DownloadToken, type FichierApiStatus, type UploadServer, type UploadResponse } from "../src/1fichier.js";
 import { ApiRateLimiter } from "../src/rate-limit.js";
 import { configureServerTimeouts, createApp, UPLOAD_REQUEST_TIMEOUT_MS } from "../src/server.js";
 
@@ -47,6 +48,87 @@ test("API client retries upload server with POST only after method rejection", a
 test("API client normalizes the official host-only upload server response", async () => {
   const client = new FichierClient("api-key", async () => new Response(JSON.stringify({ url: "invalid_node.1fichier.com", id: "upload-id" }), { status: 200 }));
   assert.deepEqual(await client.getUploadServer(), { url: "https://invalid_node.1fichier.com", id: "upload-id" });
+});
+
+test("API status recognizes placeholders without making an upstream request", async () => {
+  for (const apiKey of ["SET_ME_IN_EASYPANEL", "replace-with-your-1fichier-api-key"]) {
+    let calls = 0;
+    const client = new FichierClient(apiKey, async () => {
+      calls += 1;
+      throw new Error("upstream must not be called");
+    });
+    assert.equal(await client.getApiStatus(), "not_configured");
+    assert.equal(calls, 0);
+  }
+});
+
+class RecordingRateLimiter extends ApiRateLimiter {
+  public enqueued = 0;
+
+  public constructor() {
+    super(1_000);
+  }
+
+  public override enqueue<T>(task: () => Promise<T>): Promise<T> {
+    this.enqueued += 1;
+    return task();
+  }
+}
+
+test("API status uses the official user-info request and accepts a non-empty email", async () => {
+  let input: string | URL | undefined;
+  let requestInit: RequestInit | undefined;
+  const limiter = new RecordingRateLimiter();
+  const client = new FichierClient("server-only-key", async (request, init) => {
+    input = request;
+    requestInit = init;
+    return new Response(JSON.stringify({ email: "owner@example.test", plan: "Premium" }), { status: 200 });
+  }, limiter);
+  assert.equal(await client.getApiStatus(), "connected");
+  assert.equal(limiter.enqueued, 1);
+  assert.equal(input, "https://api.1fichier.com/v1/user/info.cgi");
+  assert.equal(requestInit?.method, "POST");
+  const headers = new Headers(requestInit?.headers);
+  assert.equal(headers.get("authorization"), "Bearer server-only-key");
+  assert.equal(headers.get("content-type"), "application/json");
+  assert.equal(requestInit?.body, "{}");
+  assert.equal(requestInit?.redirect, "error");
+  assert.ok(requestInit?.signal);
+});
+
+test("API status classifies auth, upstream, malformed, and network failures safely", async () => {
+  const responses: Array<{ response?: Response; error?: Error; expected: FichierApiStatus }> = [
+    { response: new Response("unauthorized", { status: 401 }), expected: "invalid_key" },
+    { response: new Response(JSON.stringify({ error: "temporary IP lock after too many requests" }), { status: 403 }), expected: "unavailable" },
+    { response: new Response("upstream failure", { status: 503 }), expected: "unavailable" },
+    { response: new Response(JSON.stringify({ account: "missing-email" }), { status: 200 }), expected: "unavailable" },
+    { error: new Error("network failure"), expected: "unavailable" },
+  ];
+  for (const entry of responses) {
+    const client = new FichierClient("server-only-key", async () => {
+      if (entry.error) throw entry.error;
+      return entry.response ?? new Response(null, { status: 500 });
+    });
+    assert.equal(await client.getApiStatus(), entry.expected);
+  }
+});
+
+test("API status caches results and deduplicates concurrent validation", async () => {
+  assert.ok(API_STATUS_CACHE_TTL_MS >= 6 * 60 * 1000);
+  let calls = 0;
+  let resolveResponse: ((response: Response) => void) | undefined;
+  const response = new Promise<Response>((resolve) => { resolveResponse = resolve; });
+  const client = new FichierClient("server-only-key", async () => {
+    calls += 1;
+    return response;
+  }, new RecordingRateLimiter());
+  const first = client.getApiStatus();
+  const second = client.getApiStatus();
+  assert.equal(calls, 1);
+  resolveResponse?.(new Response(JSON.stringify({ email: "owner@example.test" }), { status: 200 }));
+  assert.deepEqual(await Promise.all([first, second]), ["connected", "connected"]);
+  assert.equal(await client.getApiStatus(), "connected");
+  assert.equal(calls, 1);
 });
 
 test("upload status links extract documented link objects", async () => {
@@ -96,6 +178,7 @@ test("upload request timeout is extended without changing header timeout", () =>
 
 class MockClient extends FichierClient {
   public readonly requestedLinks: string[] = [];
+  public statusChecks = 0;
 
   public constructor() {
     super("mock-key", async () => new Response("{}"));
@@ -104,6 +187,11 @@ class MockClient extends FichierClient {
   public override async getDownloadToken(link: string, _pass?: string): Promise<DownloadToken> {
     this.requestedLinks.push(link);
     return { url: "https://download.1fichier.com/private-token" };
+  }
+
+  public override async getApiStatus(): Promise<FichierApiStatus> {
+    this.statusChecks += 1;
+    return "connected";
   }
 
   public override async getUploadServer(): Promise<UploadServer> {
@@ -154,6 +242,33 @@ test("health endpoint is public and token route is protected", async () => {
   assert.equal(health.status, 200);
   const token = await fetch(`${origin}/api/download/token`, { method: "POST", headers: { Origin: origin, "Content-Type": "application/json" }, body: JSON.stringify({ links: ["https://1fichier.com/?abcde"] }) });
   assert.equal(token.status, 401);
+});
+
+test("API status route requires a session and exposes only the status enum", async () => {
+  const unauthenticated = await fetch(`${origin}/api/1fichier/status`);
+  assert.equal(unauthenticated.status, 401);
+  assert.equal(mockClient.statusChecks, 0);
+
+  const login = await fetch(`${origin}/api/login`, { method: "POST", headers: { Origin: origin, "Content-Type": "application/json" }, body: JSON.stringify({ password: config.appPassword }) });
+  const cookie = login.headers.get("set-cookie")?.split(";", 1)[0];
+  assert.ok(cookie);
+  const response = await fetch(`${origin}/api/1fichier/status`, { headers: { Cookie: cookie } });
+  assert.equal(response.status, 200);
+  assert.deepEqual(await response.json(), { status: "connected" });
+  assert.equal(mockClient.statusChecks, 1);
+});
+
+test("Nightdesk keeps session and API status visible with mobile sign-out", async () => {
+  const [page, styles, mockup] = await Promise.all([
+    readFile(new URL("../src/public/index.html", import.meta.url), "utf8"),
+    readFile(new URL("../src/public/styles.css", import.meta.url), "utf8"),
+    readFile(new URL("../design/mockups/index.html", import.meta.url), "utf8"),
+  ]);
+  assert.match(page, /<span class="status status--ok">signed in<\/span>/);
+  assert.match(page, /id="api-status"[^>]*role="status"[^>]*aria-live="polite"/);
+  assert.match(styles, /\.night-header \.header-actions \{ display: flex; flex: 1 0 100%;/);
+  assert.match(mockup, /<span class="status status--ok">signed in<\/span>\s*<span class="status status--ok">API connected<\/span>/);
+  assert.doesNotMatch(mockup, /<span class="status status--working">connected<\/span>/);
 });
 
 test("login and canonical download handoff use the mocked client", async () => {

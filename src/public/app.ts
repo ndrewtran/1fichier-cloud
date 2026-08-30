@@ -20,6 +20,8 @@ interface SessionResponse {
   maxUploadBytes?: number;
 }
 
+type ApiStatus = "checking" | "connected" | "not_configured" | "invalid_key" | "unavailable";
+
 const loginView = element("login-view");
 const deskView = element("desk-view");
 const loginForm = element<HTMLFormElement>("login-form");
@@ -39,11 +41,13 @@ const activityList = element("activity-list");
 const activityCount = element("activity-count");
 const transferCount = element("transfer-count");
 const logoutButton = element<HTMLButtonElement>("logout-button");
+const apiStatus = element("api-status");
 
 const uploads: UploadItem[] = [];
 const downloads: DownloadItem[] = [];
 const activities: Array<{ title: string; detail: string; time: string }> = [];
 let processingUploads = false;
+let apiStatusRequest = 0;
 
 function element<T extends HTMLElement = HTMLElement>(id: string): T {
   const found = document.getElementById(id);
@@ -87,6 +91,18 @@ function setVisible(authenticated: boolean): void {
   else passwordInput.focus();
 }
 
+function setApiStatus(status: ApiStatus): void {
+  const statusClass = status === "connected" ? "status--ok" : status === "invalid_key" || status === "unavailable" ? "status--error" : status === "not_configured" ? "status--waiting" : "status--working";
+  const statusCopy = status === "connected" ? "API connected" : status === "not_configured" ? "API not configured" : status === "invalid_key" ? "API key invalid" : status === "unavailable" ? "API unavailable" : "API checking";
+  apiStatus.className = `status ${statusClass}`;
+  apiStatus.textContent = statusCopy;
+}
+
+function resetApiStatus(): void {
+  apiStatusRequest += 1;
+  setApiStatus("checking");
+}
+
 function addActivity(title: string, detail: string): void {
   activities.unshift({ title, detail, time: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) });
   activities.splice(6);
@@ -126,6 +142,31 @@ function renderDownloads(): void {
 
 function parseResponse(value: string): unknown {
   try { return JSON.parse(value) as unknown; } catch { return null; }
+}
+
+function isApiStatus(value: unknown): value is Exclude<ApiStatus, "checking"> {
+  return value === "connected" || value === "not_configured" || value === "invalid_key" || value === "unavailable";
+}
+
+async function refreshApiStatus(): Promise<void> {
+  const requestId = ++apiStatusRequest;
+  setApiStatus("checking");
+  try {
+    const response = await fetch("/api/1fichier/status", { credentials: "same-origin" });
+    if (response.status === 401) {
+      if (requestId !== apiStatusRequest) return;
+      resetApiStatus();
+      setVisible(false);
+      loginError.textContent = "Session expired, please sign in again";
+      loginError.hidden = false;
+      return;
+    }
+    const body = parseResponse(await response.text());
+    const status = isRecord(body) && isApiStatus(body.status) ? body.status : "unavailable";
+    if (requestId === apiStatusRequest) setApiStatus(status);
+  } catch {
+    if (requestId === apiStatusRequest) setApiStatus("unavailable");
+  }
 }
 
 function uploadOne(item: UploadItem): Promise<void> {
@@ -257,6 +298,7 @@ loginForm.addEventListener("submit", async (event) => {
     passwordInput.value = "";
     setVisible(true);
     addActivity("Session", "Signed in");
+    void refreshApiStatus();
   } catch (error: unknown) {
     loginError.textContent = error instanceof Error ? error.message : "Sign in failed";
     loginError.hidden = false;
@@ -266,6 +308,7 @@ loginForm.addEventListener("submit", async (event) => {
 });
 
 logoutButton.addEventListener("click", async () => {
+  resetApiStatus();
   await fetch("/api/logout", { method: "POST", credentials: "same-origin" });
   uploads.length = 0;
   downloads.length = 0;
@@ -315,7 +358,9 @@ async function boot(): Promise<void> {
     if (body.authenticated === true) {
       setVisible(true);
       if (typeof body.maxUploadBytes === "number") uploadLimit.textContent = `Max file size · ${displayBytes(body.maxUploadBytes)}`;
+      void refreshApiStatus();
     } else {
+      resetApiStatus();
       setVisible(false);
     }
   } catch {
